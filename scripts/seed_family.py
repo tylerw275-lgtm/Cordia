@@ -62,7 +62,7 @@ FAMILY = [
         "name": "Amber Wilkinson",
         "relationship": "daughter-in-law",
         "gender": "female",
-        "birthday": date(1942, 9, 7),  # as provided — verify if this seems off
+        "birthday": date(1982, 9, 7),
         "phone": "16154232821",
         "personality_notes": "Aaron's wife. Mother of Brighton and Bea.",
         "parent": "Aaron Wilkinson",  # used to resolve spouse relationship context
