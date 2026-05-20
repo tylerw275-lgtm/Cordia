@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, String, Text, func
+from sqlalchemy import Date, DateTime, ForeignKey, String, Text, func
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.orm import relationship as sa_relationship
@@ -14,7 +14,12 @@ class FamilyMember(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
+    nickname: Mapped[str | None] = mapped_column(String(100), nullable=True)
     relationship: Mapped[str] = mapped_column(String(100), nullable=False)
+    gender: Mapped[str | None] = mapped_column(String(10), nullable=True)  # male | female | other
+    aliases: Mapped[list[str] | None] = mapped_column(ARRAY(String), nullable=True)  # former names
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("family_members.id"), nullable=True)
+    address: Mapped[str | None] = mapped_column(Text, nullable=True)
     city: Mapped[str | None] = mapped_column(String(100), nullable=True)
     state: Mapped[str | None] = mapped_column(String(50), nullable=True)
     birthday: Mapped[date | None] = mapped_column(Date, nullable=True)
@@ -38,9 +43,21 @@ class FamilyEvent(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
-    event_type: Mapped[str] = mapped_column(String(50), nullable=False)  # birthday | anniversary | gathering | school_event
+    event_type: Mapped[str] = mapped_column(String(50), nullable=False)
     event_date: Mapped[date] = mapped_column(Date, nullable=False)
-    recurrence: Mapped[str | None] = mapped_column(String(20), nullable=True)  # annual | one_time
+    recurrence: Mapped[str | None] = mapped_column(String(20), nullable=True)
     family_member_ids: Mapped[list[str] | None] = mapped_column(ARRAY(UUID(as_uuid=True)), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class GrandkidActivity(Base):
+    __tablename__ = "grandkid_activities"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    activity_date: Mapped[date] = mapped_column(Date, nullable=False)
+    category: Mapped[str] = mapped_column(String(50), nullable=False)  # concert|travel|theme_park|sports|cultural|shopping|restaurant
+    participant_ids: Mapped[list[str] | None] = mapped_column(ARRAY(UUID(as_uuid=True)), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

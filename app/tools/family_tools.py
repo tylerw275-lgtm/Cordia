@@ -5,13 +5,13 @@ from app.services import family_service
 TOOL_SCHEMAS = [
     {
         "name": "get_family_member",
-        "description": "Retrieve a family member's profile including their interests, personality, location, and birthday. Always call this before planning a grandchild trip.",
+        "description": "Retrieve a family member's profile including interests, personality, location, birthday, and aliases. Always call this before planning a grandchild trip. Also works if Cordia uses an old name (e.g. 'Brad' for Aaron, 'Hunter' for Ryan).",
         "input_schema": {
             "type": "object",
             "properties": {
                 "name": {
                     "type": "string",
-                    "description": "Name of the family member (partial match is fine)",
+                    "description": "Name of the family member (partial match, nicknames, and former names all work)",
                 },
             },
             "required": ["name"],
@@ -39,6 +39,53 @@ TOOL_SCHEMAS = [
             },
         },
     },
+    {
+        "name": "get_grandkid_activity_balance",
+        "description": "Check whether Cordia's special activities are balanced between grandsons and granddaughters. Call this whenever a grandkid trip or activity is being discussed, or when she mentions having done something with grandkids.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "log_grandkid_activity",
+        "description": "Record a special activity Cordia did with grandkids. Call this when she mentions having done something fun or memorable with one or more grandchildren.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Name of the activity or event"},
+                "activity_date": {"type": "string", "description": "Date in YYYY-MM-DD format (approximate is fine)"},
+                "category": {
+                    "type": "string",
+                    "enum": ["concert", "travel", "theme_park", "sports", "cultural", "shopping", "restaurant", "outdoor", "other"],
+                },
+                "participant_names": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Names of grandkids who participated",
+                },
+                "notes": {"type": "string", "description": "Any additional context"},
+            },
+            "required": ["title", "activity_date", "category", "participant_names"],
+        },
+    },
+    {
+        "name": "update_family_member_notes",
+        "description": "Update a family member's interests or personality notes when Cordia shares new information about them. Use this to keep profiles current as you learn more.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Family member's name"},
+                "field": {
+                    "type": "string",
+                    "enum": ["interests", "personality_notes", "email", "phone", "address", "grade_level"],
+                    "description": "Which field to update",
+                },
+                "value": {"type": "string", "description": "New value or addition to append"},
+            },
+            "required": ["name", "field", "value"],
+        },
+    },
 ]
 
 
@@ -50,10 +97,16 @@ async def get_family_member_handler(db: AsyncSession, name: str, **kwargs) -> di
         "found": True,
         "id": str(member.id),
         "name": member.name,
+        "nickname": member.nickname,
+        "aliases": member.aliases or [],
         "relationship": member.relationship,
+        "gender": member.gender,
         "city": member.city,
         "state": member.state,
+        "address": member.address,
         "birthday": member.birthday.isoformat() if member.birthday else None,
+        "email": member.email,
+        "phone": member.phone,
         "school_name": member.school_name,
         "grade_level": member.grade_level,
         "interests": member.interests or [],
@@ -68,7 +121,10 @@ async def list_family_members_handler(db: AsyncSession, **kwargs) -> dict:
         "family": [
             {
                 "name": m.name,
+                "nickname": m.nickname,
+                "aliases": m.aliases or [],
                 "relationship": m.relationship,
+                "gender": m.gender,
                 "city": m.city,
                 "state": m.state,
                 "birthday": m.birthday.isoformat() if m.birthday else None,
@@ -93,3 +149,35 @@ async def list_family_events_handler(db: AsyncSession, days_ahead: int = 90, **k
         ],
         "count": len(events),
     }
+
+
+async def get_grandkid_activity_balance_handler(db: AsyncSession, **kwargs) -> dict:
+    return await family_service.get_grandkid_activity_balance(db)
+
+
+async def log_grandkid_activity_handler(
+    db: AsyncSession,
+    title: str,
+    activity_date: str,
+    category: str,
+    participant_names: list[str],
+    notes: str | None = None,
+    **kwargs,
+) -> dict:
+    from datetime import date
+    parsed_date = date.fromisoformat(activity_date)
+    activity = await family_service.log_grandkid_activity(
+        db, title=title, activity_date=parsed_date,
+        category=category, participant_names=participant_names, notes=notes,
+    )
+    return {
+        "logged": True,
+        "activity_id": str(activity.id),
+        "title": title,
+        "participants": participant_names,
+    }
+
+
+async def update_family_member_notes_handler(db: AsyncSession, name: str, field: str, value: str, **kwargs) -> dict:
+    success = await family_service.update_family_member_notes(db, name, field, value)
+    return {"updated": success, "name": name, "field": field}

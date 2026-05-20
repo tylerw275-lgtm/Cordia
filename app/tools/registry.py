@@ -6,7 +6,7 @@ from app.tools import calendar_tools, family_tools, lease_tools, memory_tools
 # Always-on tools
 _BASE_TOOLS: list[dict] = [
     *memory_tools.TOOL_SCHEMAS,
-    *family_tools.TOOL_SCHEMAS,
+    *family_tools.TOOL_SCHEMAS,  # now includes get_grandkid_activity_balance, log_grandkid_activity, update_family_member_notes
     *calendar_tools.TOOL_SCHEMAS,
 ]
 
@@ -16,6 +16,9 @@ _BASE_HANDLERS: dict[str, Callable] = {
     "get_family_member": family_tools.get_family_member_handler,
     "list_family_members": family_tools.list_family_members_handler,
     "list_family_events": family_tools.list_family_events_handler,
+    "get_grandkid_activity_balance": family_tools.get_grandkid_activity_balance_handler,
+    "log_grandkid_activity": family_tools.log_grandkid_activity_handler,
+    "update_family_member_notes": family_tools.update_family_member_notes_handler,
     "schedule_family_event": calendar_tools.schedule_event_handler,
 }
 

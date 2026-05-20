@@ -93,3 +93,32 @@ async def create_event(body: dict[str, Any], db: AsyncSession = Depends(get_db))
     body["event_date"] = date.fromisoformat(body["event_date"])
     event = await family_service.create_family_event(db, **body)
     return {"id": str(event.id), "title": event.title}
+
+
+@router.get("/activities/balance")
+async def get_activity_balance(db: AsyncSession = Depends(get_db)) -> dict:
+    return await family_service.get_grandkid_activity_balance(db)
+
+
+@router.post("/activities")
+async def log_activity(body: dict[str, Any], db: AsyncSession = Depends(get_db)) -> dict:
+    activity_date = date.fromisoformat(body["activity_date"])
+    activity = await family_service.log_grandkid_activity(
+        db,
+        title=body["title"],
+        activity_date=activity_date,
+        category=body["category"],
+        participant_names=body.get("participant_names", []),
+        notes=body.get("notes"),
+    )
+    return {"id": str(activity.id), "title": activity.title}
+
+
+@router.patch("/{member_id}/notes")
+async def update_member_notes(
+    member_id: uuid.UUID, body: dict[str, Any], db: AsyncSession = Depends(get_db)
+) -> dict:
+    success = await family_service.update_family_member_notes(
+        db, name=body["name"], field=body["field"], value=body["value"]
+    )
+    return {"updated": success}
