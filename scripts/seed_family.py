@@ -62,7 +62,7 @@ FAMILY = [
         "name": "Amber Wilkinson",
         "relationship": "daughter-in-law",
         "gender": "female",
-        "birthday": date(1982, 9, 7),
+        "birthday": date(1980, 9, 7),
         "phone": "16154232821",
         "personality_notes": "Aaron's wife. Mother of Brighton and Bea.",
         "parent": "Aaron Wilkinson",  # used to resolve spouse relationship context
