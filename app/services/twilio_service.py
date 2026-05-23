@@ -12,6 +12,10 @@ logger = logging.getLogger(__name__)
 
 def _get_client():
     from twilio.rest import Client
+    # Prefer API Key auth when available (more secure, scoped credentials)
+    if settings.twilio_api_key_sid and settings.twilio_api_key_secret:
+        return Client(settings.twilio_api_key_sid, settings.twilio_api_key_secret,
+                      settings.twilio_account_sid)
     return Client(settings.twilio_account_sid, settings.twilio_auth_token)
 
 

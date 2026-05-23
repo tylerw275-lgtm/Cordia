@@ -12,7 +12,9 @@ class Settings(BaseSettings):
     claude_model: str = "claude-sonnet-4-6"
 
     twilio_account_sid: str = ""
-    twilio_auth_token: str = ""
+    twilio_auth_token: str = ""  # needed only for webhook signature validation
+    twilio_api_key_sid: str = ""   # API Key SID (SK...) — preferred for client auth
+    twilio_api_key_secret: str = ""
     twilio_phone_number: str = ""
     cordia_phone_number: str = ""
 
