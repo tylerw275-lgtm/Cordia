@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cordia AI — SMS Opt-In</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Georgia, serif; background: #faf9f7; color: #2c2c2c; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 2rem; }
+    .card { background: #fff; border: 1px solid #e4ddd4; border-radius: 4px; max-width: 560px; width: 100%; padding: 2.5rem 3rem; }
+    h1 { font-size: 1.35rem; font-weight: normal; letter-spacing: 0.04em; color: #1a1a1a; margin-bottom: 0.25rem; }
+    .subtitle { font-size: 0.85rem; color: #888; margin-bottom: 2rem; letter-spacing: 0.02em; }
+    p { font-size: 0.95rem; line-height: 1.65; color: #444; margin-bottom: 1rem; }
+    .number { font-size: 1.6rem; letter-spacing: 0.08em; color: #1a1a1a; font-family: monospace; margin: 1.25rem 0; text-align: center; }
+    .fine { font-size: 0.78rem; color: #999; line-height: 1.6; margin-top: 1.5rem; border-top: 1px solid #f0ece8; padding-top: 1.25rem; }
+    a { color: #666; }
+    .badge { display: inline-block; background: #f0ece8; border-radius: 3px; font-size: 0.78rem; padding: 0.2rem 0.55rem; margin-right: 0.4rem; font-family: monospace; letter-spacing: 0.03em; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Cordia AI</h1>
+    <p class="subtitle">Personal SMS Assistant</p>
+
+    <p>Cordia AI is a private, invitation-only SMS assistant. Participants opt in by texting <strong>START</strong> to the number below, or by receiving a direct invitation link.</p>
+
+    <div class="number">{{ twilio_number }}</div>
+
+    <p>By sending <strong>START</strong> (or any message), you agree to receive automated, AI-generated SMS replies from Cordia AI in response to your messages. This is a conversational assistant — messages are sent only in reply to your outbound texts.</p>
+
+    <p>
+      <span class="badge">STOP</span> to unsubscribe at any time.<br>
+      <span class="badge">HELP</span> for support information.<br>
+      Message and data rates may apply.
+    </p>
+
+    <div class="fine">
+      This service is operated by Crown Bakeries / Cordia Harrington.
+      <a href="/terms">Terms of Service</a> &middot; <a href="/privacy">Privacy Policy</a><br><br>
+      Opt-in record: consent is captured at the time of first contact and stored with timestamp and phone number.
+      Consent records are retained for a minimum of 4 years.
+    </div>
+  </div>
+</body>
+</html>
