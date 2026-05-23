@@ -26,8 +26,9 @@ async def receive_sms(
         form_data = dict(await request.form())
         await twilio_service.verify_twilio_request(request, form_data)
 
-    # Whitelist — only accept from Cordia's number in single-user MVP
-    if settings.cordia_phone_number and From != settings.cordia_phone_number:
+    # Whitelist — only accept from Cordia's number (or test number during testcordia phase)
+    allowed = {n for n in (settings.cordia_phone_number, settings.cordia_test_phone_number) if n}
+    if allowed and From not in allowed:
         logger.warning(f"SMS from unknown number {From} — rejected")
         return Response(content=TWIML_EMPTY, media_type="application/xml")
 

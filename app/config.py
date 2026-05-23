@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     twilio_api_key_secret: str = ""
     twilio_phone_number: str = ""
     cordia_phone_number: str = ""
+    cordia_test_phone_number: str = ""  # treated identically to cordia_phone_number during testing
 
     amadeus_client_id: str = ""
     amadeus_client_secret: str = ""
