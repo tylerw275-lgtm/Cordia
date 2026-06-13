@@ -16,18 +16,18 @@ router = APIRouter()
 TWIML_EMPTY = '<?xml version="1.0"?><Response></Response>'
 
 _OPT_IN_CONFIRM = (
-    "Welcome to Cordia AI — your personal assistant. "
-    "Reply STOP to unsubscribe at any time, HELP for info. "
-    "Msg & data rates may apply."
+    "Cordia AI by Crown Bakeries: You're subscribed to your personal assistant. "
+    "Message frequency varies. Msg & data rates may apply. "
+    "Reply HELP for help, STOP to unsubscribe."
 )
 _HELP_MSG = (
-    "Cordia AI: personal SMS assistant operated by Crown Bakeries. "
-    "Reply STOP to cancel. All service and messaging costs are covered by the operator. "
-    f"Support: info@crownbakeries.com"
+    "Cordia AI by Crown Bakeries — your personal assistant. "
+    "Msg & data rates may apply. Support: info@crownbakeries.com. "
+    "Reply STOP to unsubscribe."
 )
 _STOP_CONFIRM = (
-    "You have been unsubscribed from Cordia AI. No further messages will be sent. "
-    "Text START to re-subscribe."
+    "You have successfully been unsubscribed from Cordia AI. "
+    "You will not receive any more messages. Reply START to resubscribe."
 )
 _FAMILY_WELCOME = (
     "Hi {name}! I'm Cordia's family assistant. You can share gift ideas, tips on how "
@@ -95,7 +95,7 @@ async def receive_sms(
     keyword = Body.strip().upper()
 
     # Handle STOP — Twilio also handles this natively, but we record it
-    if keyword in ("STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT"):
+    if keyword in ("STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT", "OPTOUT", "REVOKE"):
         await _record_opt_out(db, From)
         await twilio_service.send_sms(to=From, body=_STOP_CONFIRM)
         return Response(content=TWIML_EMPTY, media_type="application/xml")
@@ -106,8 +106,8 @@ async def receive_sms(
         await twilio_service.send_sms(to=From, body=_OPT_IN_CONFIRM)
         return Response(content=TWIML_EMPTY, media_type="application/xml")
 
-    # Handle HELP
-    if keyword == "HELP":
+    # Handle HELP / INFO
+    if keyword in ("HELP", "INFO"):
         await twilio_service.send_sms(to=From, body=_HELP_MSG)
         return Response(content=TWIML_EMPTY, media_type="application/xml")
 
