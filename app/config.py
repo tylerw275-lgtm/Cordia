@@ -22,11 +22,20 @@ class Settings(BaseSettings):
 
     duffel_access_token: str = ""
 
+    # Email (independent of Crown Bakeries — dedicated assistant domain)
+    enable_email: bool = True
+    email_provider: str = "resend"
+    email_api_key: str = ""
+    email_from: str = ""  # e.g. "Cordia <cordia@askcordia.com>"
+    email_inbound_secret: str = ""  # optional shared secret to verify inbound webhook
+    owner_email: str = ""  # Cordia's destination inbox
+
     enable_flight_search: bool = True
     enable_lease_review: bool = True
     enable_family_coordination: bool = True
 
     flight_monitor_interval_minutes: int = 60
+    morning_brief_hour: int = 7  # local server hour for the daily brief
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

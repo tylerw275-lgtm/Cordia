@@ -1,7 +1,7 @@
 from typing import Callable
 
 from app.config import settings
-from app.tools import calendar_tools, family_circle_tools, family_tools, lease_tools, memory_tools
+from app.tools import calendar_tools, email_tools, family_circle_tools, family_tools, lease_tools, memory_tools
 
 # Always-on tools (owner / Cordia)
 _BASE_TOOLS: list[dict] = [
@@ -34,6 +34,8 @@ def get_tool_schemas(role: str = "owner") -> list[dict]:
         schemas.extend(flight_tools.TOOL_SCHEMAS)
     if settings.enable_lease_review:
         schemas.extend(lease_tools.TOOL_SCHEMAS)
+    if settings.enable_email:
+        schemas.extend(email_tools.OWNER_TOOL_SCHEMAS)
     return schemas
 
 
@@ -47,4 +49,6 @@ def get_handler(tool_name: str, role: str = "owner") -> Callable | None:
         handlers["watch_flight_price"] = flight_tools.watch_price_handler
     if settings.enable_lease_review:
         handlers["flag_lease_clauses"] = lease_tools.flag_clauses_handler
+    if settings.enable_email:
+        handlers.update(email_tools.OWNER_EMAIL_HANDLERS)
     return handlers.get(tool_name)

@@ -31,6 +31,18 @@ async def resolve_member_by_phone(db: AsyncSession, phone: str) -> FamilyMember 
     return None
 
 
+async def resolve_member_by_email(db: AsyncSession, email: str) -> FamilyMember | None:
+    """Find a family member whose stored email matches (case-insensitive)."""
+    target = (email or "").strip().lower()
+    if not target:
+        return None
+    result = await db.execute(select(FamilyMember).where(FamilyMember.email.isnot(None)))
+    for member in result.scalars().all():
+        if (member.email or "").strip().lower() == target:
+            return member
+    return None
+
+
 async def grant_circle_access(db: AsyncSession, name: str) -> FamilyMember | None:
     from app.services.family_service import get_family_member_by_name
     member = await get_family_member_by_name(db, name)

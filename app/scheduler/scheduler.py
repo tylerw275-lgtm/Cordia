@@ -4,6 +4,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.config import settings
 from app.scheduler.jobs.flight_monitor import monitor_flight_prices
+from app.scheduler.jobs.morning_brief import send_morning_brief
 from app.scheduler.jobs.reminders import send_birthday_reminders, send_lease_reminders
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,15 @@ def setup_scheduler() -> None:
         hour=7,
         minute=30,
         id="birthday_reminders",
+        replace_existing=True,
+    )
+
+    _scheduler.add_job(
+        send_morning_brief,
+        trigger="cron",
+        hour=settings.morning_brief_hour,
+        minute=45,
+        id="morning_brief",
         replace_existing=True,
     )
 
