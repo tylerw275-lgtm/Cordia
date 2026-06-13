@@ -9,8 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.conversation import Conversation, Message
-from app.prompts.system_prompt import build_system_prompt
-from app.services import memory_service
+from app.prompts.system_prompt import build_family_system_prompt, build_system_prompt
+from app.services import family_circle_service, memory_service
 from app.tools.registry import get_handler, get_tool_schemas
 
 logger = logging.getLogger(__name__)
@@ -91,26 +91,54 @@ async def _persist_message(
     await db.commit()
 
 
+async def _build_owner_system(db: AsyncSession, user_message: str, context_hint: str | None) -> list[dict]:
+    if context_hint is None:
+        context_hint = detect_context(user_message)
+
+    memories = await memory_service.search_memories(db, query=user_message, limit=5)
+    system = build_system_prompt(context_hint)
+    if memories:
+        lines = [f"- {m.subject}: {m.content}" for m in memories]
+        system.append({"type": "text", "text": "\nRELEVANT MEMORY:\n" + "\n".join(lines)})
+
+    # Make Cordia aware of new family contributions without auto-consuming them
+    pending = await family_circle_service.get_unsurfaced_inputs(db)
+    if pending:
+        system.append({
+            "type": "text",
+            "text": (
+                f"\nFAMILY CIRCLE: {len(pending)} new item(s) shared by family that Cordia hasn't seen "
+                "(gift ideas, tips, or requests to talk). If relevant to her message, call "
+                "get_family_circle_updates to retrieve and mention them warmly."
+            ),
+        })
+    return system
+
+
+async def _build_family_system(db: AsyncSession, member) -> list[dict]:
+    open_reqs = await family_circle_service.get_open_requests_for(db, member)
+    req_text = ""
+    if open_reqs:
+        lines = [f"- {r.prompt}" for r in open_reqs]
+        req_text = (
+            "Cordia has asked the family for the following — work it into the conversation "
+            "naturally and record what they share:\n" + "\n".join(lines)
+        )
+    return build_family_system_prompt(member.name, req_text)
+
+
 async def chat(
     db: AsyncSession,
     conversation_id: uuid.UUID,
     user_message: str,
     context_hint: str | None = None,
+    sender_role: str = "owner",
+    sender_member: Any = None,
 ) -> str:
-    if context_hint is None:
-        context_hint = detect_context(user_message)
-
-    # Load relevant memories proactively
-    memories = await memory_service.search_memories(db, query=user_message, limit=5)
-    memory_block = ""
-    if memories:
-        lines = [f"- {m.subject}: {m.content}" for m in memories]
-        memory_block = "\nRELEVANT MEMORY:\n" + "\n".join(lines)
-
-    # Build system prompt with optional module context
-    system = build_system_prompt(context_hint)
-    if memory_block:
-        system.append({"type": "text", "text": memory_block})
+    if sender_role == "family" and sender_member is not None:
+        system = await _build_family_system(db, sender_member)
+    else:
+        system = await _build_owner_system(db, user_message, context_hint)
 
     # Load conversation history
     history = await _load_history(db, conversation_id)
@@ -119,7 +147,7 @@ async def chat(
     await _persist_message(db, conversation_id, "user", user_message)
 
     messages = history + [{"role": "user", "content": user_message}]
-    tools = get_tool_schemas()
+    tools = get_tool_schemas(sender_role)
 
     max_iterations = 10
     for _ in range(max_iterations):
@@ -142,12 +170,15 @@ async def chat(
             tool_results = []
             for block in response.content:
                 if block.type == "tool_use":
-                    handler = get_handler(block.name)
+                    handler = get_handler(block.name, sender_role)
                     if handler is None:
                         result = {"error": f"Unknown tool: {block.name}"}
                     else:
                         try:
-                            result = await handler(db=db, **block.input)
+                            if sender_role == "family":
+                                result = await handler(db=db, acting_member=sender_member, **block.input)
+                            else:
+                                result = await handler(db=db, **block.input)
                         except Exception as e:
                             logger.error(f"Tool {block.name} error: {e}")
                             result = {"error": str(e)}

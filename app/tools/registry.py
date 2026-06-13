@@ -1,13 +1,14 @@
 from typing import Callable
 
 from app.config import settings
-from app.tools import calendar_tools, family_tools, lease_tools, memory_tools
+from app.tools import calendar_tools, family_circle_tools, family_tools, lease_tools, memory_tools
 
-# Always-on tools
+# Always-on tools (owner / Cordia)
 _BASE_TOOLS: list[dict] = [
     *memory_tools.TOOL_SCHEMAS,
     *family_tools.TOOL_SCHEMAS,  # now includes get_grandkid_activity_balance, log_grandkid_activity, update_family_member_notes
     *calendar_tools.TOOL_SCHEMAS,
+    *family_circle_tools.OWNER_TOOL_SCHEMAS,
 ]
 
 _BASE_HANDLERS: dict[str, Callable] = {
@@ -20,10 +21,13 @@ _BASE_HANDLERS: dict[str, Callable] = {
     "log_grandkid_activity": family_tools.log_grandkid_activity_handler,
     "update_family_member_notes": family_tools.update_family_member_notes_handler,
     "schedule_family_event": calendar_tools.schedule_event_handler,
+    **family_circle_tools.OWNER_EXTRA_HANDLERS,
 }
 
 
-def get_tool_schemas() -> list[dict]:
+def get_tool_schemas(role: str = "owner") -> list[dict]:
+    if role == "family":
+        return list(family_circle_tools.FAMILY_TOOL_SCHEMAS)
     schemas = list(_BASE_TOOLS)
     if settings.enable_flight_search:
         from app.tools import flight_tools
@@ -33,7 +37,9 @@ def get_tool_schemas() -> list[dict]:
     return schemas
 
 
-def get_handler(tool_name: str) -> Callable | None:
+def get_handler(tool_name: str, role: str = "owner") -> Callable | None:
+    if role == "family":
+        return family_circle_tools.FAMILY_HANDLERS.get(tool_name)
     handlers = dict(_BASE_HANDLERS)
     if settings.enable_flight_search:
         from app.tools import flight_tools
