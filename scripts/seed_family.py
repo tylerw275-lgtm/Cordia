@@ -115,7 +115,8 @@ FAMILY = [
         "gender": "male",
         "birthday": date(2018, 3, 13),
         "parent": "Aaron Wilkinson",
-        "interests": ["swimming", "being active"],
+        "interests": ["Legos", "video games", "swimming", "being active"],
+        "personality_notes": "Loves playing video games, especially with his dad. Big into Legos.",
     },
     {
         "name": "Elijah Wilkinson",
@@ -123,7 +124,8 @@ FAMILY = [
         "gender": "male",
         "birthday": date(2018, 4, 9),
         "parent": "Tyler Wilkinson",
-        "interests": ["swimming"],
+        "interests": ["Legos", "Harry Potter", "reading", "swimming"],
+        "personality_notes": "Loves Legos. Deep into Harry Potter right now — re-reading 'Harry Potter and the Cursed Child.'",
     },
     {
         "name": "Merrick Wilkinson",
@@ -236,7 +238,28 @@ async def seed() -> None:
             # Check if already exists
             existing = await get_family_member_by_name(db, data["name"])
             if existing:
-                print(f"  ✓ {data['name']} already exists — skipping")
+                # Merge in any new interests / personality notes so re-running the
+                # seed refreshes already-seeded databases (e.g. production).
+                changed = False
+                if data.get("interests"):
+                    current = list(existing.interests or [])
+                    additions = [i for i in data["interests"] if i not in current]
+                    if additions:
+                        existing.interests = current + additions
+                        changed = True
+                if data.get("personality_notes"):
+                    note = data["personality_notes"]
+                    current_note = existing.personality_notes or ""
+                    if note not in current_note:
+                        existing.personality_notes = (
+                            f"{current_note}\n{note}".strip() if current_note else note
+                        )
+                        changed = True
+                if changed:
+                    await db.commit()
+                    print(f"  ~ Updated: {data['name']} (merged interests/notes)")
+                else:
+                    print(f"  ✓ {data['name']} already exists — no changes")
                 created[data["name"]] = existing
                 continue
 
