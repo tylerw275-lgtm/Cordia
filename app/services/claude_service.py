@@ -134,6 +134,7 @@ async def chat(
     context_hint: str | None = None,
     sender_role: str = "owner",
     sender_member: Any = None,
+    images: list[dict] | None = None,
 ) -> str:
     if sender_role == "family" and sender_member is not None:
         system = await _build_family_system(db, sender_member)
@@ -143,10 +144,19 @@ async def chat(
     # Load conversation history
     history = await _load_history(db, conversation_id)
 
-    # Persist user message
-    await _persist_message(db, conversation_id, "user", user_message)
+    # Build this turn's content. Images (from MMS) ride alongside any caption.
+    if images:
+        caption = user_message.strip() or "(photo sent with no caption)"
+        user_content: Any = [*images, {"type": "text", "text": caption}]
+        persisted = f"[sent {len(images)} image(s)] {user_message}".strip()
+    else:
+        user_content = user_message
+        persisted = user_message
 
-    messages = history + [{"role": "user", "content": user_message}]
+    # Persist a lightweight text record (we don't store raw image bytes in history)
+    await _persist_message(db, conversation_id, "user", persisted)
+
+    messages = history + [{"role": "user", "content": user_content}]
     tools = get_tool_schemas(sender_role)
 
     max_iterations = 10

@@ -88,9 +88,20 @@ async def receive_sms(
     MessageSid: str = Form(...),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
+    form_data = dict(await request.form())
     if not settings.debug:
-        form_data = dict(await request.form())
         await twilio_service.verify_twilio_request(request, form_data)
+
+    # Collect any MMS media (images). Downloaded only after the sender is authorized.
+    try:
+        num_media = int(form_data.get("NumMedia", "0") or 0)
+    except ValueError:
+        num_media = 0
+    media = [
+        (form_data.get(f"MediaUrl{i}"), form_data.get(f"MediaContentType{i}"))
+        for i in range(num_media)
+        if form_data.get(f"MediaUrl{i}")
+    ]
 
     keyword = Body.strip().upper()
 
@@ -126,12 +137,15 @@ async def receive_sms(
         first_name = member.nickname or member.name.split()[0]
         await twilio_service.send_sms(to=From, body=_FAMILY_WELCOME.format(name=first_name))
 
-    logger.info(f"Inbound SMS from {From} (role={role}): {Body[:50]}...")
+    logger.info(f"Inbound SMS from {From} (role={role}, media={len(media)}): {Body[:50]}...")
+
+    # Download images only now that the sender is authorized
+    images = await twilio_service.fetch_image_blocks(media) if media else []
 
     try:
         conversation = await claude_service.get_or_create_conversation(db, From)
         response_text = await claude_service.chat(
-            db, conversation.id, Body, sender_role=role, sender_member=member
+            db, conversation.id, Body, sender_role=role, sender_member=member, images=images
         )
         await twilio_service.send_sms(to=From, body=response_text)
     except Exception as e:
