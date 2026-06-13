@@ -62,15 +62,43 @@ Last updated: June 2026</p>
 
 _OPT_IN = """<!DOCTYPE html>
 <html lang="en">
-<head><meta charset="UTF-8"><title>Opt-In — Cordia AI</title>
-<style>body{font-family:sans-serif;max-width:680px;margin:40px auto;padding:0 20px;color:#222;line-height:1.6}</style>
+<head><meta charset="UTF-8"><title>SMS Program & Consent — Cordia AI</title>
+<style>body{font-family:sans-serif;max-width:680px;margin:40px auto;padding:0 20px;color:#222;line-height:1.6}h1{font-size:1.4rem}h2{font-size:1.05rem;margin-top:1.6rem}table{border-collapse:collapse;width:100%}td{border:1px solid #ddd;padding:6px 10px;vertical-align:top}</style>
 </head>
 <body>
-<h1>Cordia AI — SMS Opt-In</h1>
-<p>To use Cordia AI, simply text the service number. Your first message constitutes consent to receive SMS messages from this service.</p>
-<p>Reply <strong>STOP</strong> at any time to unsubscribe. Reply <strong>HELP</strong> for support.</p>
-<p>Message and data rates may apply. All service costs are covered by the operator.</p>
-<p><a href="/privacy">Privacy Policy</a> | <a href="/terms">Terms of Service</a></p>
+<h1>Cordia AI — SMS Program & Consent Disclosure</h1>
+<p><strong>Program name:</strong> Cordia AI<br>
+<strong>Operated by:</strong> Crown Bakeries<br>
+<strong>Program type:</strong> Private, two-way personal-assistant text service</p>
+
+<h2>What this program is</h2>
+<p>Cordia AI is a private SMS personal assistant operated by Crown Bakeries for the
+company's CEO and a small number of specifically authorized family members. It is
+a conversational, two-way service: recipients text the assistant with requests and
+the assistant replies. It is <strong>not</strong> marketed to or available to the
+general public, and no one outside the pre-authorized group can receive messages.</p>
+
+<h2>Messages you can expect</h2>
+<p>Replies to your requests and related follow-ups, including help with travel
+planning, scheduling and family-event coordination, reminders, and general personal
+assistance. Message frequency varies based on your own activity (conversational).</p>
+
+<h2>How consent is obtained</h2>
+<p>Each authorized recipient gives prior express consent directly to Crown Bakeries
+before being added to the program. Consent records are collected and retained by the
+operator. An authorized recipient then confirms enrollment by sending an initial text
+(or replying <strong>START</strong>) to the program number, after which a confirmation
+message is sent. Consent is never shared with or sold to third parties, and phone
+numbers are used solely to operate this assistant.</p>
+
+<h2>Opt-out & help</h2>
+<table>
+<tr><td><strong>STOP</strong></td><td>Reply STOP (or OPTOUT, UNSUBSCRIBE, CANCEL, END, QUIT) at any time to unsubscribe. You will receive one confirmation and no further messages.</td></tr>
+<tr><td><strong>HELP</strong></td><td>Reply HELP or INFO for support, or email info@crownbakeries.com.</td></tr>
+<tr><td><strong>Rates</strong></td><td>Message &amp; data rates may apply.</td></tr>
+</table>
+
+<p style="margin-top:1.6rem"><a href="/privacy">Privacy Policy</a> &nbsp;|&nbsp; <a href="/terms">Terms of Service</a></p>
 </body>
 </html>"""
 
