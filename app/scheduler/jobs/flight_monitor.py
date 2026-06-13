@@ -5,7 +5,7 @@ from sqlalchemy import select
 
 from app.database import get_db_session
 from app.models.trips import FlightWatch, PriceSnapshot
-from app.services import amadeus_service, twilio_service
+from app.services import duffel_service, twilio_service
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -20,7 +20,7 @@ async def monitor_flight_prices() -> None:
 
         for watch in watches:
             try:
-                offers = await amadeus_service.search_flights(
+                offers = await duffel_service.search_flights(
                     origin=watch.origin,
                     destination=watch.destination,
                     depart_date=watch.depart_date.isoformat(),

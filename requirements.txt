@@ -6,7 +6,6 @@ alembic>=1.14.0
 pydantic-settings>=2.7.0
 anthropic>=0.49.0
 twilio>=9.4.0
-amadeus>=8.0.0  # Requires build tools: sudo apt-get install python3-dev build-essential
 apscheduler>=3.10.4
 python-multipart>=0.0.20
 httpx>=0.27.0

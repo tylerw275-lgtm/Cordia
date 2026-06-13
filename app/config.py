@@ -20,9 +20,7 @@ class Settings(BaseSettings):
     cordia_phone_number: str = ""
     cordia_test_phone_number: str = ""
 
-    amadeus_client_id: str = ""
-    amadeus_client_secret: str = ""
-    amadeus_environment: str = "test"
+    duffel_access_token: str = ""
 
     enable_flight_search: bool = True
     enable_lease_review: bool = True

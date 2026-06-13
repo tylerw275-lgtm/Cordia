@@ -3,12 +3,12 @@ from datetime import date
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services import amadeus_service
+from app.services import duffel_service
 
 TOOL_SCHEMAS = [
     {
         "name": "search_flights",
-        "description": "Search for available flights using Amadeus. Use when Cordia asks about flights or travel options. Returns top options sorted by price.",
+        "description": "Search for available flights using Duffel. Use when Cordia asks about flights or travel options. Returns top options sorted by price.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -56,7 +56,7 @@ TOOL_SCHEMAS = [
 
 
 async def search_flights_handler(db: AsyncSession, **kwargs) -> dict:
-    flights = await amadeus_service.search_flights(**kwargs)
+    flights = await duffel_service.search_flights(**kwargs)
     if not flights:
         return {"found": False, "message": "No flights found for those parameters. Try different dates or airports."}
     return {"found": True, "flights": flights, "count": len(flights)}
