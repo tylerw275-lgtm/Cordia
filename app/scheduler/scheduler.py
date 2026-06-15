@@ -3,6 +3,7 @@ import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.config import settings
+from app.scheduler.jobs.birthday_prep import send_birthday_prep
 from app.scheduler.jobs.email_poll import poll_inbound_email
 from app.scheduler.jobs.flight_monitor import monitor_flight_prices
 from app.scheduler.jobs.morning_brief import send_morning_brief
@@ -49,6 +50,15 @@ def setup_scheduler() -> None:
         hour=settings.morning_brief_hour,
         minute=45,
         id="morning_brief",
+        replace_existing=True,
+    )
+
+    _scheduler.add_job(
+        send_birthday_prep,
+        trigger="cron",
+        hour=8,
+        minute=15,
+        id="birthday_prep",
         replace_existing=True,
     )
 

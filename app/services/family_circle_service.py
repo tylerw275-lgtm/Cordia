@@ -106,6 +106,15 @@ async def get_unsurfaced_inputs(db: AsyncSession) -> Sequence[FamilyInput]:
     return result.scalars().all()
 
 
+async def get_inputs_about(db: AsyncSession, member_id, kinds: list[str] | None = None) -> Sequence[FamilyInput]:
+    """All inputs family members have shared about a given person (e.g. gift ideas for Bea)."""
+    stmt = select(FamilyInput).where(FamilyInput.about_member_id == member_id)
+    if kinds:
+        stmt = stmt.where(FamilyInput.kind.in_(kinds))
+    result = await db.execute(stmt.order_by(FamilyInput.created_at.desc()))
+    return result.scalars().all()
+
+
 async def mark_inputs_surfaced(db: AsyncSession, input_ids: list[uuid.UUID]) -> None:
     if not input_ids:
         return

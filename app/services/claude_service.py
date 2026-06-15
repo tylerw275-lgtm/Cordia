@@ -55,6 +55,13 @@ async def get_or_create_conversation(db: AsyncSession, phone_number: str) -> Con
     return conv
 
 
+async def record_assistant_message(db: AsyncSession, phone_number: str, text: str) -> None:
+    """Persist a proactively-sent assistant message into the person's conversation,
+    so a later reply has the context (used by proactive jobs like birthday prep)."""
+    conv = await get_or_create_conversation(db, phone_number)
+    await _persist_message(db, conv.id, "assistant", text)
+
+
 async def _load_history(db: AsyncSession, conversation_id: uuid.UUID, limit: int = 20) -> list[dict]:
     result = await db.execute(
         select(Message)

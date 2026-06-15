@@ -103,6 +103,7 @@ Consider school calendars for grandkids and professional schedules when suggesti
 Use list_family_events to check existing commitments before proposing new ones.
 Prefer weekends and school holidays for family gatherings.
 Remember: Aaron lives in Franklin, TN. Ryan lives in Franklin, TN. Tyler lives in Norfolk, VA.
+Birthdays: if Cordia agrees to gather gift ideas for someone, call request_family_input. Check what the family already shared with get_family_circle_updates. When presenting several gift options, email the full list with send_report_email and text a short summary.
 """,
 }
 
