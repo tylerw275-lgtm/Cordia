@@ -4,14 +4,28 @@ Uses a dedicated, third-party email identity (independent of Crown Bakeries)
 so the assistant keeps working even if the company/email changes.
 Sending is provider-pluggable; Resend is the default.
 """
+import asyncio
 import logging
 import re
+import smtplib
+import ssl
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 
 import httpx
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def from_address() -> str:
+    """The 'From' header. Prefer an explicit email_from, else derive from the address."""
+    if settings.email_from:
+        return settings.email_from
+    if settings.email_address:
+        return f"{settings.email_from_name} <{settings.email_address}>"
+    return ""
 
 
 def markdown_to_html(text: str) -> str:
@@ -60,18 +74,49 @@ def markdown_to_html(text: str) -> str:
 
 async def send_email(to: str, subject: str, body_markdown: str) -> dict:
     """Send an email via the configured provider. Returns {sent: bool, ...}."""
-    if not settings.enable_email or not settings.email_api_key or not settings.email_from:
-        logger.warning("Email not configured (api key / from address missing) — skipping send")
-        return {"sent": False, "reason": "email_not_configured"}
+    if not settings.enable_email:
+        return {"sent": False, "reason": "email_disabled"}
     if not to:
         return {"sent": False, "reason": "no_recipient"}
 
     html = markdown_to_html(body_markdown)
+    provider = settings.email_provider
 
-    if settings.email_provider == "resend":
+    if provider == "gmail":
+        if not settings.email_address or not settings.email_app_password:
+            logger.warning("Gmail not configured (address / app password missing) — skipping send")
+            return {"sent": False, "reason": "email_not_configured"}
+        return await _send_gmail(to, subject, html, body_markdown)
+    if provider == "resend":
+        if not settings.email_api_key or not from_address():
+            logger.warning("Resend not configured (api key / from missing) — skipping send")
+            return {"sent": False, "reason": "email_not_configured"}
         return await _send_resend(to, subject, html, body_markdown)
-    logger.error(f"Unknown email provider: {settings.email_provider}")
+    logger.error(f"Unknown email provider: {provider}")
     return {"sent": False, "reason": "unknown_provider"}
+
+
+def _send_gmail_sync(to: str, subject: str, html: str, text: str) -> None:
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = from_address()
+    msg["To"] = to
+    msg.attach(MIMEText(text, "plain"))
+    msg.attach(MIMEText(html, "html"))
+    context = ssl.create_default_context()
+    with smtplib.SMTP("smtp.gmail.com", 587, timeout=30) as server:
+        server.starttls(context=context)
+        server.login(settings.email_address, settings.email_app_password)
+        server.sendmail(settings.email_address, [to], msg.as_string())
+
+
+async def _send_gmail(to: str, subject: str, html: str, text: str) -> dict:
+    try:
+        await asyncio.to_thread(_send_gmail_sync, to, subject, html, text)
+        return {"sent": True}
+    except Exception as e:
+        logger.error(f"Gmail send_email error: {e}")
+        return {"sent": False, "reason": str(e)}
 
 
 async def _send_resend(to: str, subject: str, html: str, text: str) -> dict:

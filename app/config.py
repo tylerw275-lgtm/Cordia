@@ -22,12 +22,18 @@ class Settings(BaseSettings):
 
     duffel_access_token: str = ""
 
-    # Email (independent of Crown Bakeries — dedicated assistant domain)
+    # Email (independent of Crown Bakeries — dedicated assistant identity)
     enable_email: bool = True
-    email_provider: str = "resend"
+    email_provider: str = "gmail"  # "gmail" (free, SMTP+IMAP) or "resend"
+    email_from_name: str = "Cordia"
+    # Gmail provider (free): a dedicated Gmail + an App Password (requires 2FA)
+    email_address: str = ""  # e.g. cordiaassistant@gmail.com — also the IMAP inbox
+    email_app_password: str = ""
+    email_poll_interval_seconds: int = 120  # how often to check the inbox for replies
+    # Resend provider (optional upgrade to a branded domain)
     email_api_key: str = ""
-    email_from: str = ""  # e.g. "Cordia <cordia@askcordia.com>"
-    email_inbound_secret: str = ""  # optional shared secret to verify inbound webhook
+    email_from: str = ""  # overrides the derived "Name <address>" if set
+    email_inbound_secret: str = ""  # optional shared secret for the inbound webhook
     owner_email: str = ""  # Cordia's destination inbox
 
     enable_flight_search: bool = True

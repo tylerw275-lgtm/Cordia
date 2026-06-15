@@ -3,6 +3,7 @@ import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.config import settings
+from app.scheduler.jobs.email_poll import poll_inbound_email
 from app.scheduler.jobs.flight_monitor import monitor_flight_prices
 from app.scheduler.jobs.morning_brief import send_morning_brief
 from app.scheduler.jobs.reminders import send_birthday_reminders, send_lease_reminders
@@ -50,6 +51,18 @@ def setup_scheduler() -> None:
         id="morning_brief",
         replace_existing=True,
     )
+
+    # Two-way email for Gmail: poll the inbox (Gmail has no free inbound webhook)
+    if settings.enable_email and settings.email_provider == "gmail" and settings.email_address and settings.email_app_password:
+        _scheduler.add_job(
+            poll_inbound_email,
+            trigger="interval",
+            seconds=settings.email_poll_interval_seconds,
+            id="email_poll",
+            replace_existing=True,
+            max_instances=1,
+        )
+        logger.info(f"Email inbox polling every {settings.email_poll_interval_seconds}s")
 
     _scheduler.start()
     logger.info("Scheduler started")

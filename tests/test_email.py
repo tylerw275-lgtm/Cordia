@@ -13,10 +13,36 @@ def test_markdown_to_html_renders_structure():
 
 @pytest.mark.asyncio
 async def test_send_email_skips_when_unconfigured(mocker):
-    mocker.patch("app.config.settings.email_api_key", "")
+    mocker.patch("app.config.settings.email_provider", "gmail")
+    mocker.patch("app.config.settings.email_address", "")
+    mocker.patch("app.config.settings.email_app_password", "")
     result = await email_service.send_email("x@y.com", "Hi", "body")
     assert result["sent"] is False
     assert result["reason"] == "email_not_configured"
+
+
+def test_from_address_derives_from_gmail(mocker):
+    mocker.patch("app.config.settings.email_from", "")
+    mocker.patch("app.config.settings.email_from_name", "Cordia")
+    mocker.patch("app.config.settings.email_address", "cordiaassistant@gmail.com")
+    assert email_service.from_address() == "Cordia <cordiaassistant@gmail.com>"
+
+
+@pytest.mark.asyncio
+async def test_send_email_gmail_uses_smtp(mocker):
+    mocker.patch("app.config.settings.email_provider", "gmail")
+    mocker.patch("app.config.settings.email_address", "bot@gmail.com")
+    mocker.patch("app.config.settings.email_app_password", "apppassword123")
+    smtp_mock = mocker.patch("app.services.email_service._send_gmail_sync")
+    result = await email_service.send_email("cordia@inbox.com", "Trip", "## Plan\n- day 1")
+    assert result["sent"] is True
+    assert smtp_mock.called
+
+
+def test_strip_quoted_history():
+    from app.services import email_inbound
+    body = "Yes do that\n\nOn Mon, Jun 15 2026, Cordia wrote:\n> the original message"
+    assert email_inbound.strip_quoted(body) == "Yes do that"
 
 
 @pytest.mark.asyncio
