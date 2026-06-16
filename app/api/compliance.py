@@ -10,7 +10,7 @@ _PRIVACY = """<!DOCTYPE html>
 </head>
 <body>
 <h1>Privacy Policy</h1>
-<p><strong>Cordia AI</strong> is a personal SMS-based AI assistant operated by Crown Bakeries.<br>
+<p><strong>Cordia AI</strong> is a private SMS-based AI personal-assistant service operated by <strong>AI-Gen Partners</strong> (a service of Marq LLC).<br>
 Last updated: June 2026</p>
 
 <h2>Information We Collect</h2>
@@ -29,7 +29,7 @@ Last updated: June 2026</p>
 <p>Reply <strong>STOP</strong> to any message to unsubscribe immediately. No further messages will be sent after opting out.</p>
 
 <h2>Contact</h2>
-<p>For questions or data requests: <a href="mailto:info@crownbakeries.com">info@crownbakeries.com</a></p>
+<p>AI-Gen Partners (Marq LLC) — <a href="mailto:tyler@ai-genpartners.com">tyler@ai-genpartners.com</a></p>
 </body>
 </html>"""
 
@@ -40,14 +40,14 @@ _TERMS = """<!DOCTYPE html>
 </head>
 <body>
 <h1>Terms of Service</h1>
-<p><strong>Cordia AI</strong> is operated by Crown Bakeries.<br>
+<p><strong>Cordia AI</strong> is operated by <strong>AI-Gen Partners</strong> (a service of Marq LLC).<br>
 Last updated: June 2026</p>
 
 <h2>Service Description</h2>
-<p>Cordia AI is a personal SMS-based AI assistant. By texting the service number, you agree to these terms.</p>
+<p>Cordia AI is a private SMS-based AI personal assistant. By texting the service number, you agree to these terms.</p>
 
 <h2>Messaging</h2>
-<p>Message and data rates may apply. All messaging costs incurred by the operator are covered by Crown Bakeries — there is no charge to the end user beyond standard carrier rates.</p>
+<p>Message and data rates may apply. All messaging costs incurred by the operator are covered by AI-Gen Partners — there is no charge to the end user beyond standard carrier rates.</p>
 
 <h2>Opt-Out</h2>
 <p>Reply <strong>STOP</strong> to unsubscribe at any time. Reply <strong>HELP</strong> for support information.</p>
@@ -59,7 +59,7 @@ Last updated: June 2026</p>
 <p>This service is provided for informational and personal assistance purposes. For legal, medical, or financial decisions, always consult a qualified professional.</p>
 
 <h2>Contact</h2>
-<p><a href="mailto:info@crownbakeries.com">info@crownbakeries.com</a></p>
+<p><a href="mailto:tyler@ai-genpartners.com">tyler@ai-genpartners.com</a></p>
 </body>
 </html>"""
 
@@ -71,28 +71,29 @@ _OPT_IN = """<!DOCTYPE html>
 <body>
 <h1>Cordia AI — SMS Program & Consent Disclosure</h1>
 <p><strong>Program name:</strong> Cordia AI<br>
-<strong>Operated by:</strong> Crown Bakeries<br>
+<strong>Operated by:</strong> AI-Gen Partners (a service of Marq LLC)<br>
 <strong>Program type:</strong> Private, two-way personal-assistant text service</p>
 
 <h2>What this program is</h2>
-<p>Cordia AI is a private SMS personal assistant operated by Crown Bakeries for the
-company's CEO and a small number of specifically authorized family members. It is
-a conversational, two-way service: recipients text the assistant with requests and
-the assistant replies. It is <strong>not</strong> marketed to or available to the
-general public, and no one outside the pre-authorized group can receive messages.</p>
+<p>Cordia AI is a private SMS personal assistant operated by AI-Gen Partners and provided
+to one authorized individual client and a small number of her specifically authorized
+family members. It is a conversational, two-way service: recipients text the assistant
+with requests and the assistant replies. It is <strong>not</strong> marketed to or
+available to the general public, and no one outside the pre-authorized group can receive
+messages.</p>
 
 <h2>Messages you can expect</h2>
-<p>Replies to your requests and related follow-ups, including help with travel
-planning, scheduling and family-event coordination, reminders, and general personal
-assistance. Message frequency varies based on your own activity (conversational).</p>
+<p>Replies to your requests and related follow-ups, including help with travel planning,
+scheduling and family-event coordination, reminders, and general personal assistance.
+Message frequency varies based on your own activity (conversational).</p>
 
 <h2>How consent is obtained</h2>
-<p>Each authorized recipient gives prior express consent directly to Crown Bakeries
+<p>Each authorized recipient gives prior express consent directly to AI-Gen Partners
 before being added to the program. Consent records are collected and retained by the
 operator. An authorized recipient then confirms enrollment by sending an initial text
 (or replying <strong>START</strong>) to the program number, after which a confirmation
-message is sent. Consent is never shared with or sold to third parties, and phone
-numbers are used solely to operate this assistant.</p>
+message is sent. Consent is never shared with or sold to third parties, and phone numbers
+are used solely to operate this assistant.</p>
 
 <h2>Mobile information sharing</h2>
 <p>No mobile information will be shared with third parties or affiliates for marketing
@@ -102,7 +103,7 @@ shared with any third parties under any circumstances.</p>
 <h2>Opt-out & help</h2>
 <table>
 <tr><td><strong>STOP</strong></td><td>Reply STOP (or OPTOUT, UNSUBSCRIBE, CANCEL, END, QUIT) at any time to unsubscribe. You will receive one confirmation and no further messages.</td></tr>
-<tr><td><strong>HELP</strong></td><td>Reply HELP or INFO for support, or email info@crownbakeries.com.</td></tr>
+<tr><td><strong>HELP</strong></td><td>Reply HELP or INFO for support, or email tyler@ai-genpartners.com.</td></tr>
 <tr><td><strong>Rates</strong></td><td>Message &amp; data rates may apply.</td></tr>
 </table>
 

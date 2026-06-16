@@ -15,13 +15,13 @@ router = APIRouter()
 TWIML_EMPTY = '<?xml version="1.0"?><Response></Response>'
 
 _OPT_IN_CONFIRM = (
-    "Cordia AI by Crown Bakeries: You're subscribed to your personal assistant. "
+    "Cordia AI by AI-Gen Partners: You're subscribed to your personal assistant. "
     "Message frequency varies. Msg & data rates may apply. "
     "Reply HELP for help, STOP to unsubscribe."
 )
 _HELP_MSG = (
-    "Cordia AI by Crown Bakeries — your personal assistant. "
-    "Msg & data rates may apply. Support: info@crownbakeries.com. "
+    "Cordia AI by AI-Gen Partners — your personal assistant. "
+    "Msg & data rates may apply. Support: tyler@ai-genpartners.com. "
     "Reply STOP to unsubscribe."
 )
 _STOP_CONFIRM = (
