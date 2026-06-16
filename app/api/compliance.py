@@ -19,6 +19,9 @@ Last updated: June 2026</p>
 <h2>How We Use Your Information</h2>
 <p>Your phone number and messages are used solely to provide the Cordia AI assistant service. Message content is processed by Anthropic's Claude AI to generate responses. We do not sell or share your data with third parties for marketing purposes.</p>
 
+<h2>Mobile Information &amp; Text Messaging</h2>
+<p>No mobile information will be shared with third parties or affiliates for marketing or promotional purposes. Text messaging originator opt-in data and consent will not be shared with any third parties under any circumstances. Your phone number and message content are used only to operate this service — message delivery through our telecommunications provider and response generation through our AI provider — and for no other purpose.</p>
+
 <h2>Message Storage</h2>
 <p>Conversation history is stored securely to provide context for future responses. You may request deletion of your conversation history at any time by contacting us.</p>
 
@@ -90,6 +93,11 @@ operator. An authorized recipient then confirms enrollment by sending an initial
 (or replying <strong>START</strong>) to the program number, after which a confirmation
 message is sent. Consent is never shared with or sold to third parties, and phone
 numbers are used solely to operate this assistant.</p>
+
+<h2>Mobile information sharing</h2>
+<p>No mobile information will be shared with third parties or affiliates for marketing
+or promotional purposes. Text messaging originator opt-in data and consent will not be
+shared with any third parties under any circumstances.</p>
 
 <h2>Opt-out & help</h2>
 <table>
