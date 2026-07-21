@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     public_base_url: str = "https://cordia-production.up.railway.app"
 
     duffel_access_token: str = ""
+    duffel_webhook_secret: str = ""  # from the Duffel dashboard webhook config
+    enable_flight_booking: bool = False  # Duffel Links hosted checkout (off until tested)
 
     # Email (independent of Crown Bakeries — dedicated assistant identity)
     enable_email: bool = True

@@ -3,7 +3,55 @@ from datetime import date
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.services import duffel_service
+
+BOOKING_TOOL_SCHEMAS = [
+    {
+        "name": "get_booking_link",
+        "description": (
+            "Create a secure hosted booking link for Cordia when she wants to actually book "
+            "a flight. The link opens Duffel's checkout where she searches or confirms the "
+            "flight, picks seats/bags, and pays with her own card. Text her the link with a "
+            "short note about which flight to pick. The link expires in 24 hours. After she "
+            "books, you'll automatically receive the confirmation and can reference it later."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "reference": {
+                    "type": "string",
+                    "description": "Short label for this booking session (e.g. 'atl-mia-nov27')",
+                },
+            },
+            "required": ["reference"],
+        },
+    },
+]
+
+
+async def get_booking_link_handler(db: AsyncSession, reference: str, **kwargs) -> dict:
+    base = settings.public_base_url.rstrip("/")
+    url = await duffel_service.create_link_session(
+        reference=reference[:50],
+        success_url=f"{base}/booking/complete",
+        failure_url=f"{base}/booking/failed",
+        abandonment_url=f"{base}/booking/abandoned",
+    )
+    if not url:
+        return {
+            "created": False,
+            "message": "Couldn't create a booking link right now — try again in a moment.",
+        }
+    return {
+        "created": True,
+        "booking_url": url,
+        "expires": "24 hours",
+        "message": (
+            "Text Cordia this link so she can complete the booking herself. Remind her "
+            "which flight to select (airline, time, price) since the page starts at search."
+        ),
+    }
 
 TOOL_SCHEMAS = [
     {

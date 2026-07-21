@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 import structlog
 from fastapi import FastAPI
 
-from app.api import compliance, conversations, email, family, real_estate, sms, trips
+from app.api import compliance, conversations, duffel_webhooks, email, family, real_estate, sms, trips
 from app.config import settings
 from app.middleware.logging import CorrelationIdMiddleware
 from app.scheduler.scheduler import setup_scheduler, shutdown_scheduler
@@ -43,6 +43,7 @@ app.include_router(conversations.router)
 app.include_router(family.router)
 app.include_router(trips.router)
 app.include_router(real_estate.router)
+app.include_router(duffel_webhooks.router)
 
 
 @app.get("/health")
