@@ -1,6 +1,15 @@
-from fastapi import APIRouter
-from fastapi.responses import HTMLResponse
+import logging
+import re
+from datetime import datetime, timezone
 
+from fastapi import APIRouter, Depends, Form
+from fastapi.responses import HTMLResponse
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.deps import get_db
+
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _PRIVACY = """<!DOCTYPE html>
@@ -112,29 +121,35 @@ shared with any third parties under any circumstances.</p>
 </html>"""
 
 
-_CONSENT_FORM = """<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="UTF-8"><title>SMS Consent Form — Cordia AI</title>
-<style>
+_CONSENT_STYLE = """
 body{font-family:sans-serif;max-width:680px;margin:40px auto;padding:0 20px;color:#222;line-height:1.6}
 h1{font-size:1.4rem}h2{font-size:1.05rem;margin-top:1.6rem}
 .form-box{border:2px solid #333;border-radius:6px;padding:24px;margin:1.5rem 0;background:#fafafa}
 .form-box h2{margin-top:0;font-size:1.15rem}
 .checkbox-row{display:flex;gap:10px;align-items:flex-start;margin:1rem 0}
-.checkbox{width:18px;height:18px;border:2px solid #333;border-radius:3px;flex-shrink:0;margin-top:3px;background:#fff}
-.sig-line{border-bottom:1px solid #333;height:1.6rem;margin-top:1.4rem}
-.sig-label{font-size:.85rem;color:#555}
-.field-line{border-bottom:1px solid #333;height:1.4rem;margin-top:1rem}
+.checkbox-row input[type=checkbox]{width:18px;height:18px;flex-shrink:0;margin-top:4px}
+label.field{display:block;margin-top:1.2rem;font-weight:bold;font-size:.95rem}
+input[type=text],input[type=tel]{width:100%;padding:10px;margin-top:4px;border:1px solid #999;border-radius:4px;font-size:1rem;box-sizing:border-box}
+button{margin-top:1.6rem;padding:12px 28px;background:#1a6b3c;color:#fff;border:none;border-radius:4px;font-size:1rem;cursor:pointer}
+button:hover{background:#155830}
 .note{font-size:.9rem;color:#555;font-style:italic}
-</style>
+.success{border:2px solid #1a6b3c;border-radius:6px;padding:24px;background:#f0f9f3}
+.error{color:#a4262c;font-weight:bold}
+"""
+
+_CONSENT_FORM = f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SMS Consent Form — Cordia AI</title>
+<style>{_CONSENT_STYLE}</style>
 </head>
 <body>
-<h1>Cordia AI — SMS Program Written Consent Form</h1>
-<p class="note">This page hosts the written consent form that each authorized recipient
-completes before being enrolled in the Cordia AI SMS program. It is published here so the
-consent experience is publicly verifiable. The program is private and invitation-only —
-this form is provided by AI-Gen Partners directly to each authorized recipient; there is
-no public sign-up.</p>
+<h1>Cordia AI — SMS Program Consent Form</h1>
+<p class="note">Cordia AI is a private, invitation-only SMS personal-assistant program
+operated by AI-Gen Partners (Marq LLC). This form is how each authorized recipient gives
+prior express written consent before being enrolled. Enrollment is limited to
+pre-authorized individuals — submitting this form does not grant service access to the
+general public.</p>
 
 <div class="form-box">
 <h2>SMS Messaging Consent — Cordia AI by AI-Gen Partners</h2>
@@ -142,42 +157,60 @@ no public sign-up.</p>
 <p><strong>Program:</strong> Cordia AI — a private, two-way SMS personal-assistant service<br>
 <strong>Operated by:</strong> AI-Gen Partners (Marq LLC)</p>
 
+<form method="post" action="/consent">
+<label class="field">Full name
+<input type="text" name="full_name" required maxlength="100" placeholder="Your full name">
+</label>
+
+<label class="field">Mobile phone number
+<input type="tel" name="phone" required maxlength="20" placeholder="(615) 555-1234">
+</label>
+
 <div class="checkbox-row">
-  <div class="checkbox"></div>
-  <div>I authorize AI-Gen Partners to send me recurring SMS text messages from Cordia AI,
-  my personal assistant, at the mobile number I provide below. I understand that message
-  frequency varies based on my own use of the service, that message and data rates may
-  apply, that I can reply <strong>STOP</strong> at any time to unsubscribe and
+  <input type="checkbox" name="consent" id="consent" value="yes" required>
+  <label for="consent">I authorize AI-Gen Partners to send me recurring SMS text messages
+  from Cordia AI, my personal assistant, at the mobile number provided above. I understand
+  that message frequency varies based on my own use of the service, that message and data
+  rates may apply, that I can reply <strong>STOP</strong> at any time to unsubscribe and
   <strong>HELP</strong> for assistance, and that consent is not a condition of any purchase.
   I have reviewed the <a href="/privacy">Privacy Policy</a> and
   <a href="/terms">Terms of Service</a>. My mobile number and opt-in information will not
-  be shared with third parties.</div>
+  be shared with third parties.</label>
 </div>
 
-<p class="note">Checkbox is unchecked by default — the recipient must actively check it
-to give consent.</p>
-
-<div class="field-line"></div>
-<p class="sig-label">Full name</p>
-
-<div class="field-line"></div>
-<p class="sig-label">Mobile phone number</p>
-
-<div class="sig-line"></div>
-<p class="sig-label">Signature</p>
-
-<div class="sig-line"></div>
-<p class="sig-label">Date</p>
+<button type="submit">Submit Consent</button>
+</form>
 </div>
 
-<h2>What happens after this form is completed</h2>
-<p>1. AI-Gen Partners retains the signed consent record.<br>
-2. The recipient's number is authorized in the Cordia AI system.<br>
-3. The recipient texts <strong>START</strong> to the program number to confirm enrollment.<br>
-4. The recipient receives this confirmation message: <em>"Cordia AI by AI-Gen Partners:
+<h2>What happens after you submit</h2>
+<p>1. AI-Gen Partners records and retains your consent.<br>
+2. Your number is authorized in the Cordia AI system.<br>
+3. You confirm enrollment by texting <strong>START</strong> to the program number.<br>
+4. You receive this confirmation message: <em>"Cordia AI by AI-Gen Partners:
 You're subscribed to your personal assistant. Message frequency varies. Msg &amp; data
 rates may apply. Reply HELP for help, STOP to unsubscribe."</em></p>
 
+<p style="margin-top:1.6rem"><a href="/opt-in">SMS Program Disclosure</a> &nbsp;|&nbsp;
+<a href="/privacy">Privacy Policy</a> &nbsp;|&nbsp; <a href="/terms">Terms of Service</a></p>
+</body>
+</html>"""
+
+_CONSENT_THANKS = f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Consent Recorded — Cordia AI</title>
+<style>{_CONSENT_STYLE}</style>
+</head>
+<body>
+<h1>Cordia AI — Consent Recorded</h1>
+<div class="success">
+<p><strong>Thank you — your consent has been recorded.</strong></p>
+<p>One more step: text <strong>START</strong> to the Cordia AI program number from the
+mobile phone you listed, and you'll receive a confirmation message completing your
+enrollment.</p>
+<p class="note">Reply STOP at any time to unsubscribe, or HELP for assistance.
+Message &amp; data rates may apply. Questions: tyler@ai-genpartners.com</p>
+</div>
 <p style="margin-top:1.6rem"><a href="/opt-in">SMS Program Disclosure</a> &nbsp;|&nbsp;
 <a href="/privacy">Privacy Policy</a> &nbsp;|&nbsp; <a href="/terms">Terms of Service</a></p>
 </body>
@@ -192,6 +225,46 @@ async def opt_in_page():
 @router.get("/consent", include_in_schema=False)
 async def consent_form_page():
     return HTMLResponse(_CONSENT_FORM)
+
+
+@router.post("/consent", include_in_schema=False)
+async def consent_form_submit(
+    full_name: str = Form(...),
+    phone: str = Form(...),
+    consent: str = Form(""),
+    db: AsyncSession = Depends(get_db),
+):
+    digits = re.sub(r"\D", "", phone)
+    if consent != "yes" or not full_name.strip() or len(digits) < 10:
+        return HTMLResponse(_CONSENT_FORM.replace(
+            "<h1>Cordia AI — SMS Program Consent Form</h1>",
+            '<h1>Cordia AI — SMS Program Consent Form</h1>'
+            '<p class="error">Please provide your name, a valid mobile number, '
+            "and check the consent box.</p>",
+        ), status_code=400)
+
+    normalized = f"+1{digits[-10:]}"
+    now = datetime.now(timezone.utc)
+    await db.execute(text(
+        "CREATE TABLE IF NOT EXISTS consent_submissions ("
+        "id SERIAL PRIMARY KEY, full_name TEXT NOT NULL, phone VARCHAR(20) NOT NULL, "
+        "submitted_at TIMESTAMPTZ NOT NULL)"
+    ))
+    await db.execute(
+        text("INSERT INTO consent_submissions (full_name, phone, submitted_at) "
+             "VALUES (:name, :phone, :ts)"),
+        {"name": full_name.strip()[:100], "phone": normalized, "ts": now},
+    )
+    await db.execute(
+        text("INSERT INTO sms_consent (phone, consented_at, method) "
+             "VALUES (:phone, :ts, 'web_form') "
+             "ON CONFLICT (phone) DO UPDATE SET consented_at = EXCLUDED.consented_at, "
+             "method = 'web_form', opted_out_at = NULL"),
+        {"phone": normalized, "ts": now},
+    )
+    await db.commit()
+    logger.info(f"Consent form submitted for {normalized}")
+    return HTMLResponse(_CONSENT_THANKS)
 
 
 @router.get("/privacy", include_in_schema=False)
