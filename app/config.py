@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     cordia_phone_number: str = ""
     cordia_test_phone_number: str = ""
 
+    # Public URL where compliance pages (/consent, /privacy, /terms) are served
+    public_base_url: str = "https://cordia-production.up.railway.app"
+
     duffel_access_token: str = ""
 
     # Email (independent of Crown Bakeries — dedicated assistant identity)

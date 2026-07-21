@@ -35,6 +35,21 @@ _FAMILY_WELCOME = (
     "and I'll pass them along to help her. Anything you share goes to Cordia. "
     "Reply STOP to opt out anytime."
 )
+_FAMILY_WELCOME_NEEDS_CONSENT = (
+    "Hi {name}! I'm Cordia's family assistant. First, please sign the quick consent form "
+    "at {consent_url} — it takes under a minute. Then you can share gift ideas, tips, "
+    "your kids' current interests, or calendar dates, and I'll pass them along to help "
+    "Cordia. Anything you share goes to her. Reply STOP to opt out anytime."
+)
+
+
+async def _has_signed_consent_form(db: AsyncSession, phone: str) -> bool:
+    """True if this number submitted the electronic consent form at /consent."""
+    result = await db.execute(
+        text("SELECT 1 FROM sms_consent WHERE phone = :phone AND method = 'web_form'"),
+        {"phone": phone},
+    )
+    return result.first() is not None
 
 
 async def _resolve_sender(db: AsyncSession, phone: str):
@@ -131,11 +146,18 @@ async def receive_sms(
     # Record consent on first contact
     await _record_consent(db, From)
 
-    # First time a family member texts in: send the transparent welcome
+    # First time a family member texts in: send the transparent welcome.
+    # If they haven't signed the electronic consent form yet, point them to it.
     if role == "family" and member.circle_consented_at is None:
         await family_circle_service.record_consent(db, member)
         first_name = member.nickname or member.name.split()[0]
-        await twilio_service.send_sms(to=From, body=_FAMILY_WELCOME.format(name=first_name))
+        if await _has_signed_consent_form(db, From):
+            welcome = _FAMILY_WELCOME.format(name=first_name)
+        else:
+            welcome = _FAMILY_WELCOME_NEEDS_CONSENT.format(
+                name=first_name, consent_url=f"{settings.public_base_url}/consent"
+            )
+        await twilio_service.send_sms(to=From, body=welcome)
 
     logger.info(f"Inbound SMS from {From} (role={role}, media={len(media)}): {Body[:50]}...")
 

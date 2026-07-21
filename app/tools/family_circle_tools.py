@@ -197,13 +197,21 @@ OWNER_TOOL_SCHEMAS = [
 
 
 async def grant_family_circle_access_handler(db: AsyncSession, **kw) -> dict:
+    from app.config import settings
     member = await circle.grant_circle_access(db, kw["name"])
     if not member:
         return {"granted": False, "message": f"No family member found named {kw['name']}."}
+    consent_url = f"{settings.public_base_url}/consent"
     return {
         "granted": True,
         "name": member.name,
-        "message": f"{member.name} can now contribute. Have them text this number once to get started.",
+        "consent_form_url": consent_url,
+        "message": (
+            f"{member.name} can now contribute. Tell Cordia to share this consent form link "
+            f"with them directly ({consent_url}) — once they sign it electronically, they text "
+            "this number to get started. The assistant cannot text them first; they must sign "
+            "and reach out themselves."
+        ),
     }
 
 
