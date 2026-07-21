@@ -112,9 +112,86 @@ shared with any third parties under any circumstances.</p>
 </html>"""
 
 
+_CONSENT_FORM = """<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>SMS Consent Form — Cordia AI</title>
+<style>
+body{font-family:sans-serif;max-width:680px;margin:40px auto;padding:0 20px;color:#222;line-height:1.6}
+h1{font-size:1.4rem}h2{font-size:1.05rem;margin-top:1.6rem}
+.form-box{border:2px solid #333;border-radius:6px;padding:24px;margin:1.5rem 0;background:#fafafa}
+.form-box h2{margin-top:0;font-size:1.15rem}
+.checkbox-row{display:flex;gap:10px;align-items:flex-start;margin:1rem 0}
+.checkbox{width:18px;height:18px;border:2px solid #333;border-radius:3px;flex-shrink:0;margin-top:3px;background:#fff}
+.sig-line{border-bottom:1px solid #333;height:1.6rem;margin-top:1.4rem}
+.sig-label{font-size:.85rem;color:#555}
+.field-line{border-bottom:1px solid #333;height:1.4rem;margin-top:1rem}
+.note{font-size:.9rem;color:#555;font-style:italic}
+</style>
+</head>
+<body>
+<h1>Cordia AI — SMS Program Written Consent Form</h1>
+<p class="note">This page hosts the written consent form that each authorized recipient
+completes before being enrolled in the Cordia AI SMS program. It is published here so the
+consent experience is publicly verifiable. The program is private and invitation-only —
+this form is provided by AI-Gen Partners directly to each authorized recipient; there is
+no public sign-up.</p>
+
+<div class="form-box">
+<h2>SMS Messaging Consent — Cordia AI by AI-Gen Partners</h2>
+
+<p><strong>Program:</strong> Cordia AI — a private, two-way SMS personal-assistant service<br>
+<strong>Operated by:</strong> AI-Gen Partners (Marq LLC)</p>
+
+<div class="checkbox-row">
+  <div class="checkbox"></div>
+  <div>I authorize AI-Gen Partners to send me recurring SMS text messages from Cordia AI,
+  my personal assistant, at the mobile number I provide below. I understand that message
+  frequency varies based on my own use of the service, that message and data rates may
+  apply, that I can reply <strong>STOP</strong> at any time to unsubscribe and
+  <strong>HELP</strong> for assistance, and that consent is not a condition of any purchase.
+  I have reviewed the <a href="/privacy">Privacy Policy</a> and
+  <a href="/terms">Terms of Service</a>. My mobile number and opt-in information will not
+  be shared with third parties.</div>
+</div>
+
+<p class="note">Checkbox is unchecked by default — the recipient must actively check it
+to give consent.</p>
+
+<div class="field-line"></div>
+<p class="sig-label">Full name</p>
+
+<div class="field-line"></div>
+<p class="sig-label">Mobile phone number</p>
+
+<div class="sig-line"></div>
+<p class="sig-label">Signature</p>
+
+<div class="sig-line"></div>
+<p class="sig-label">Date</p>
+</div>
+
+<h2>What happens after this form is completed</h2>
+<p>1. AI-Gen Partners retains the signed consent record.<br>
+2. The recipient's number is authorized in the Cordia AI system.<br>
+3. The recipient texts <strong>START</strong> to the program number to confirm enrollment.<br>
+4. The recipient receives this confirmation message: <em>"Cordia AI by AI-Gen Partners:
+You're subscribed to your personal assistant. Message frequency varies. Msg &amp; data
+rates may apply. Reply HELP for help, STOP to unsubscribe."</em></p>
+
+<p style="margin-top:1.6rem"><a href="/opt-in">SMS Program Disclosure</a> &nbsp;|&nbsp;
+<a href="/privacy">Privacy Policy</a> &nbsp;|&nbsp; <a href="/terms">Terms of Service</a></p>
+</body>
+</html>"""
+
+
 @router.get("/opt-in", include_in_schema=False)
 async def opt_in_page():
     return HTMLResponse(_OPT_IN)
+
+
+@router.get("/consent", include_in_schema=False)
+async def consent_form_page():
+    return HTMLResponse(_CONSENT_FORM)
 
 
 @router.get("/privacy", include_in_schema=False)
