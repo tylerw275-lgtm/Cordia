@@ -67,5 +67,6 @@ async def verify_twilio_request(request: Request, form_data: dict) -> None:
     url = f"{proto}://{host}{request.url.path}"
     if request.url.query:
         url += f"?{request.url.query}"
+    logger.warning(f"SIGNATURE DEBUG url={url} sig_header={signature} proto_hdr={request.headers.get('x-forwarded-proto')} host_hdr={request.headers.get('x-forwarded-host')}")
     if not validate_twilio_signature(url, form_data, signature):
         raise HTTPException(status_code=403, detail="Invalid Twilio signature")
