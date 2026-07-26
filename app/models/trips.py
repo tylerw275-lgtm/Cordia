@@ -58,7 +58,7 @@ class PriceSnapshot(Base):
     __tablename__ = "price_snapshots"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    flight_watch_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    flight_watch_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), sa.ForeignKey("flight_watches.id", ondelete="CASCADE"), nullable=False)
     checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     lowest_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
     currency: Mapped[str] = mapped_column(String(5), default="USD")
