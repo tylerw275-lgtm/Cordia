@@ -96,13 +96,19 @@ messages.</p>
 scheduling and family-event coordination, reminders, and general personal assistance.
 Message frequency varies based on your own activity (conversational).</p>
 
+<h2>Consent is optional — it is not a condition of service</h2>
+<p>Opting in to SMS is entirely optional and is <strong>not a condition of any purchase,
+service, or transaction</strong>. Authorized individuals who prefer not to receive text
+messages can interact with the assistant by email instead — receiving text messages is
+never required to use Cordia AI.</p>
+
 <h2>How consent is obtained</h2>
-<p>Each authorized recipient gives prior express consent directly to AI-Gen Partners
-before being added to the program. Consent records are collected and retained by the
-operator. An authorized recipient then confirms enrollment by sending an initial text
-(or replying <strong>START</strong>) to the program number, after which a confirmation
-message is sent. Consent is never shared with or sold to third parties, and phone numbers
-are used solely to operate this assistant.</p>
+<p>Each authorized recipient who chooses SMS gives prior express written consent through
+the <a href="/consent">consent form</a> before any messages are sent. Consent records are
+collected and retained by the operator. An authorized recipient then confirms enrollment
+by sending an initial text (or replying <strong>START</strong>) to the program number,
+after which a confirmation message is sent. Consent is never shared with or sold to third
+parties, and phone numbers are used solely to operate this assistant.</p>
 
 <h2>Mobile information sharing</h2>
 <p>No mobile information will be shared with third parties or affiliates for marketing
@@ -150,6 +156,10 @@ operated by AI-Gen Partners (Marq LLC). This form is how each authorized recipie
 prior express written consent before being enrolled. Enrollment is limited to
 pre-authorized individuals — submitting this form does not grant service access to the
 general public.</p>
+<p class="note"><strong>Opting in to SMS is optional and is not a condition of any
+purchase, service, or transaction.</strong> If you would rather not receive text messages,
+you can reach the assistant by email instead — text messaging is never required to use
+Cordia AI.</p>
 
 <div class="form-box">
 <h2>SMS Messaging Consent — Cordia AI by AI-Gen Partners</h2>
