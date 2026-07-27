@@ -80,6 +80,7 @@ _OPT_IN = """<!DOCTYPE html>
 <body>
 <h1>Cordia AI — SMS Program & Consent Disclosure</h1>
 <p><strong>Program name:</strong> Cordia AI<br>
+<strong>Program number:</strong> +1 (615) 502-1290<br>
 <strong>Operated by:</strong> AI-Gen Partners (a service of Marq LLC)<br>
 <strong>Program type:</strong> Private, two-way personal-assistant text service</p>
 
@@ -107,7 +108,7 @@ never required to use Cordia AI.</p>
 the <a href="/consent">consent form</a> before any messages are sent. Consent records are
 collected and retained by the operator. An authorized recipient then confirms enrollment
 by sending an initial text (or replying <strong>START</strong>) to the program number,
-after which a confirmation message is sent. Consent is never shared with or sold to third
+<strong>+1 (615) 502-1290</strong>, after which a confirmation message is sent. Consent is never shared with or sold to third
 parties, and phone numbers are used solely to operate this assistant.</p>
 
 <h2>Mobile information sharing</h2>
@@ -165,6 +166,7 @@ Cordia AI.</p>
 <h2>SMS Messaging Consent — Cordia AI by AI-Gen Partners</h2>
 
 <p><strong>Program:</strong> Cordia AI — a private, two-way SMS personal-assistant service<br>
+<strong>Program number:</strong> +1 (615) 502-1290<br>
 <strong>Operated by:</strong> AI-Gen Partners (Marq LLC)</p>
 
 <form method="post" action="/consent">
@@ -195,7 +197,7 @@ Cordia AI.</p>
 <h2>What happens after you submit</h2>
 <p>1. AI-Gen Partners records and retains your consent.<br>
 2. Your number is authorized in the Cordia AI system.<br>
-3. You confirm enrollment by texting <strong>START</strong> to the program number.<br>
+3. You confirm enrollment by texting <strong>START</strong> to the program number, <strong>+1 (615) 502-1290</strong>.<br>
 4. You receive this confirmation message: <em>"Cordia AI by AI-Gen Partners:
 You're subscribed to your personal assistant. Message frequency varies. Msg &amp; data
 rates may apply. Reply HELP for help, STOP to unsubscribe."</em></p>
@@ -215,9 +217,9 @@ _CONSENT_THANKS = f"""<!DOCTYPE html>
 <h1>Cordia AI — Consent Recorded</h1>
 <div class="success">
 <p><strong>Thank you — your consent has been recorded.</strong></p>
-<p>One more step: text <strong>START</strong> to the Cordia AI program number from the
-mobile phone you listed, and you'll receive a confirmation message completing your
-enrollment.</p>
+<p>One more step: text <strong>START</strong> to the Cordia AI program number,
+<strong>+1 (615) 502-1290</strong>, from the mobile phone you listed, and you'll receive a
+confirmation message completing your enrollment.</p>
 <p class="note">Reply STOP at any time to unsubscribe, or HELP for assistance.
 Message &amp; data rates may apply. Questions: tyler@ai-genpartners.com</p>
 </div>
