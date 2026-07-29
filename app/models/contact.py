@@ -32,6 +32,9 @@ class Contact(Base):
     # Cordia has approved processing inbound email from this address (capture
     # schedules/info as an FYI). Off by default.
     trusted_inbound: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # When Cordia last invited this person to join the SMS circle (sign the
+    # consent form). Consent itself lives in sms_consent, keyed by phone.
+    sms_invited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
