@@ -49,6 +49,8 @@ def _normalize_offer(offer: dict) -> dict:
         "arrive_time": last_seg["arriving_at"],
         "destination_airport": last_seg["destination"]["iata_code"],
         "stops": len(segments) - 1,
+        # Connection airports (empty for non-stops) — used for avoid-city preferences
+        "via": [seg["destination"]["iata_code"] for seg in segments[:-1]],
         "duration": slice_["duration"],
         "cabin": cabin_name,
         "offer_id": offer["id"],
