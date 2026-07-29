@@ -7,6 +7,7 @@ from app.scheduler.jobs.birthday_prep import send_birthday_prep
 from app.scheduler.jobs.email_poll import poll_inbound_email
 from app.scheduler.jobs.flight_monitor import monitor_flight_prices
 from app.scheduler.jobs.morning_brief import send_morning_brief
+from app.scheduler.jobs.naples_poll import poll_naples_inbox
 from app.scheduler.jobs.reminders import send_birthday_reminders, send_lease_reminders
 
 logger = logging.getLogger(__name__)
@@ -73,6 +74,18 @@ def setup_scheduler() -> None:
             max_instances=1,
         )
         logger.info(f"Email inbox polling every {settings.email_poll_interval_seconds}s")
+
+    # Naples house inbox: second monitored mailbox for the new property
+    if settings.naples_email_address and settings.naples_email_app_password:
+        _scheduler.add_job(
+            poll_naples_inbox,
+            trigger="interval",
+            seconds=settings.naples_poll_interval_seconds,
+            id="naples_poll",
+            replace_existing=True,
+            max_instances=1,
+        )
+        logger.info(f"Naples inbox polling every {settings.naples_poll_interval_seconds}s")
 
     _scheduler.start()
     logger.info("Scheduler started")

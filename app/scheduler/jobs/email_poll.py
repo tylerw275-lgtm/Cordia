@@ -42,10 +42,12 @@ def _plain_body(msg) -> str:
     return payload.decode(msg.get_content_charset() or "utf-8", errors="replace") if payload else ""
 
 
-def _fetch_unseen_sync() -> list[tuple[str, str, str]]:
+def _fetch_unseen_sync(address: str | None = None, password: str | None = None) -> list[tuple[str, str, str]]:
+    """Fetch unseen messages from a Gmail inbox over IMAP. Defaults to the
+    assistant's main mailbox; the Naples house poller passes its own creds."""
     messages: list[tuple[str, str, str]] = []
     with imaplib.IMAP4_SSL("imap.gmail.com") as box:
-        box.login(settings.email_address, settings.email_app_password)
+        box.login(address or settings.email_address, password or settings.email_app_password)
         box.select("INBOX")
         typ, data = box.search(None, "UNSEEN")
         if typ != "OK" or not data or not data[0]:
