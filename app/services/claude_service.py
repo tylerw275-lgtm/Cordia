@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.conversation import Conversation, Message
+from app.prompts.prompt_profiles import get_profile, is_deep_work
 from app.prompts.system_prompt import build_family_system_prompt, build_system_prompt
 from app.services import family_circle_service, memory_service
 from app.tools.registry import get_handler, get_tool_schemas
@@ -19,6 +20,7 @@ _client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
 
 CONTEXT_KEYWORDS = {
     "trip_planning": ["flight", "fly", "hotel", "trip", "travel", "airport", "book", "vacation", "thanksgiving", "cruise"],
+    "event_planning": ["party", "comedy", "event", "gala", "fundraiser", "dinner party", "host", "celebration", "show", "night out"],
     "family_coordination": ["family", "gather", "birthday", "anniversary", "schedule", "get together", "grandkids", "reunion"],
     "lease_review": ["lease", "rent", "tenant", "landlord", "clause", "renewal", "property", "contract"],
 }
@@ -143,10 +145,21 @@ async def chat(
     sender_member: Any = None,
     images: list[dict] | None = None,
 ) -> str:
+    if context_hint is None and sender_role != "family":
+        context_hint = detect_context(user_message)
+
     if sender_role == "family" and sender_member is not None:
         system = await _build_family_system(db, sender_member)
     else:
         system = await _build_owner_system(db, user_message, context_hint)
+
+    # Model-adaptive request shaping: bigger budget + thinking/effort for deep work
+    profile = get_profile(settings.claude_model)
+    deep = sender_role != "family" and is_deep_work(user_message, context_hint)
+    max_tokens = profile.deep_max_tokens if deep else profile.max_tokens
+    request_extras = dict(profile.deep_extras if deep else profile.normal_extras)
+    if profile.prompting_notes:
+        system.append({"type": "text", "text": "\n" + profile.prompting_notes})
 
     # Load conversation history
     history = await _load_history(db, conversation_id)
@@ -173,7 +186,8 @@ async def chat(
             system=system,
             messages=messages,
             tools=tools,
-            max_tokens=1024,
+            max_tokens=max_tokens,
+            **request_extras,
         )
 
         # Persist assistant response
