@@ -1,13 +1,59 @@
+import base64
 import hashlib
 import hmac
 import logging
 from urllib.parse import urlencode
 
+import httpx
 from fastapi import HTTPException, Request
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Image types Claude vision accepts; other MMS media (vCards, audio) is ignored
+SUPPORTED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+
+
+async def download_media(url: str) -> tuple[bytes, str] | None:
+    """Download an MMS media file from Twilio (auth required). Returns (bytes, content_type)."""
+    auth = (settings.twilio_account_sid, settings.twilio_auth_token)
+    try:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            resp = await client.get(url, auth=auth)
+            resp.raise_for_status()
+            content_type = resp.headers.get("content-type", "").split(";")[0].strip().lower()
+            return resp.content, content_type
+    except Exception as e:
+        logger.error(f"Failed to download Twilio media {url}: {e}")
+        return None
+
+
+async def fetch_image_blocks(media: list[tuple[str, str]], max_images: int = 4) -> list[dict]:
+    """Given [(url, content_type), ...] from Twilio, return Anthropic image blocks for images.
+
+    Non-image media is skipped. Each block is base64-encoded for the Messages API.
+    """
+    blocks: list[dict] = []
+    for url, declared_type in media[:max_images]:
+        if declared_type and declared_type.lower() not in SUPPORTED_IMAGE_TYPES:
+            continue
+        result = await download_media(url)
+        if not result:
+            continue
+        data, content_type = result
+        media_type = content_type if content_type in SUPPORTED_IMAGE_TYPES else (declared_type or "image/jpeg")
+        if media_type not in SUPPORTED_IMAGE_TYPES:
+            continue
+        blocks.append({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": media_type,
+                "data": base64.standard_b64encode(data).decode("ascii"),
+            },
+        })
+    return blocks
 
 
 def _get_client():

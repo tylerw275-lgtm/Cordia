@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, ForeignKey, String, Text, func
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, String, Text, func
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.orm import relationship as sa_relationship
@@ -32,6 +32,9 @@ class FamilyMember(Base):
     personality_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     loyalty_programs: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB, nullable=True)
+    # Family circle: whether this member may text the assistant and contribute
+    has_circle_access: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    circle_consented_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -48,6 +51,36 @@ class FamilyEvent(Base):
     recurrence: Mapped[str | None] = mapped_column(String(20), nullable=True)
     family_member_ids: Mapped[list[str] | None] = mapped_column(ARRAY(UUID(as_uuid=True)), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Family circle: Cordia must approve an event before family members can see it
+    shareable_with_family: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_by_member_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("family_members.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class FamilyInput(Base):
+    """Something a family member shares to help Cordia connect with them."""
+    __tablename__ = "family_inputs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    from_member_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("family_members.id"), nullable=False)
+    about_member_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("family_members.id"), nullable=True)
+    kind: Mapped[str] = mapped_column(String(30), nullable=False)  # gift_idea | engagement_tip | mac_request
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    surfaced: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class FamilyRequest(Base):
+    """An ask from Cordia to family (e.g. 'source gift ideas for Bea')."""
+    __tablename__ = "family_requests"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    about_member_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("family_members.id"), nullable=True)
+    audience: Mapped[str] = mapped_column(String(50), nullable=False, default="all")  # 'all' or a member id string
+    prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    fulfilled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

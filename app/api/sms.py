@@ -7,7 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.config import settings
-from app.services import claude_service, twilio_service
+from app.services import claude_service, family_circle_service, twilio_service
+from app.utils.phone import phones_match
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -28,6 +29,37 @@ _STOP_CONFIRM = (
     "You have successfully been unsubscribed from Cordia AI. "
     "You will not receive any more messages. Reply START to resubscribe."
 )
+_FAMILY_WELCOME = (
+    "Hi {name}! I'm Cordia's family assistant. You can share gift ideas, tips on how "
+    "you like her to connect with you, your kids' current interests, or calendar dates — "
+    "and I'll pass them along to help her. Anything you share goes to Cordia. "
+    "Reply STOP to opt out anytime."
+)
+_FAMILY_WELCOME_NEEDS_CONSENT = (
+    "Hi {name}! I'm Cordia's family assistant. First, please sign the quick consent form "
+    "at {consent_url} — it takes under a minute. Then you can share gift ideas, tips, "
+    "your kids' current interests, or calendar dates, and I'll pass them along to help "
+    "Cordia. Anything you share goes to her. Reply STOP to opt out anytime."
+)
+
+
+async def _has_signed_consent_form(db: AsyncSession, phone: str) -> bool:
+    """True if this number submitted the electronic consent form at /consent."""
+    result = await db.execute(
+        text("SELECT 1 FROM sms_consent WHERE phone = :phone AND method = 'web_form'"),
+        {"phone": phone},
+    )
+    return result.first() is not None
+
+
+async def _resolve_sender(db: AsyncSession, phone: str):
+    """Return (role, member). role is 'owner', 'family', or 'unknown'."""
+    if phones_match(phone, settings.cordia_phone_number) or phones_match(phone, settings.cordia_test_phone_number):
+        return "owner", None
+    member = await family_circle_service.resolve_member_by_phone(db, phone)
+    if member and member.has_circle_access:
+        return "family", member
+    return "unknown", None
 
 
 async def _record_consent(db: AsyncSession, phone: str) -> None:
@@ -71,9 +103,20 @@ async def receive_sms(
     MessageSid: str = Form(...),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
+    form_data = dict(await request.form())
     if not settings.debug:
-        form_data = dict(await request.form())
         await twilio_service.verify_twilio_request(request, form_data)
+
+    # Collect any MMS media (images). Downloaded only after the sender is authorized.
+    try:
+        num_media = int(form_data.get("NumMedia", "0") or 0)
+    except ValueError:
+        num_media = 0
+    media = [
+        (form_data.get(f"MediaUrl{i}"), form_data.get(f"MediaContentType{i}"))
+        for i in range(num_media)
+        if form_data.get(f"MediaUrl{i}")
+    ]
 
     keyword = Body.strip().upper()
 
@@ -94,20 +137,38 @@ async def receive_sms(
         await twilio_service.send_sms(to=From, body=_HELP_MSG)
         return Response(content=TWIML_EMPTY, media_type="application/xml")
 
-    # Whitelist — only accept from Cordia's number (or test number during testcordia phase)
-    allowed = {n for n in (settings.cordia_phone_number, settings.cordia_test_phone_number) if n}
-    if allowed and From not in allowed:
+    # Resolve who this is: Cordia (owner), an opted-in family member, or unknown
+    role, member = await _resolve_sender(db, From)
+    if role == "unknown":
         logger.warning(f"SMS from unknown number {From} — rejected")
         return Response(content=TWIML_EMPTY, media_type="application/xml")
 
     # Record consent on first contact
     await _record_consent(db, From)
 
-    logger.info(f"Inbound SMS from {From}: {Body[:50]}...")
+    # First time a family member texts in: send the transparent welcome.
+    # If they haven't signed the electronic consent form yet, point them to it.
+    if role == "family" and member.circle_consented_at is None:
+        await family_circle_service.record_consent(db, member)
+        first_name = member.nickname or member.name.split()[0]
+        if await _has_signed_consent_form(db, From):
+            welcome = _FAMILY_WELCOME.format(name=first_name)
+        else:
+            welcome = _FAMILY_WELCOME_NEEDS_CONSENT.format(
+                name=first_name, consent_url=f"{settings.public_base_url}/consent"
+            )
+        await twilio_service.send_sms(to=From, body=welcome)
+
+    logger.info(f"Inbound SMS from {From} (role={role}, media={len(media)}): {Body[:50]}...")
+
+    # Download images only now that the sender is authorized
+    images = await twilio_service.fetch_image_blocks(media) if media else []
 
     try:
         conversation = await claude_service.get_or_create_conversation(db, From)
-        response_text = await claude_service.chat(db, conversation.id, Body)
+        response_text = await claude_service.chat(
+            db, conversation.id, Body, sender_role=role, sender_member=member, images=images
+        )
         await twilio_service.send_sms(to=From, body=response_text)
     except Exception as e:
         logger.error(f"Error processing SMS: {e}", exc_info=True)

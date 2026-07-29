@@ -3,7 +3,11 @@ import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.config import settings
+from app.scheduler.jobs.birthday_prep import send_birthday_prep
+from app.scheduler.jobs.email_poll import poll_inbound_email
 from app.scheduler.jobs.flight_monitor import monitor_flight_prices
+from app.scheduler.jobs.morning_brief import send_morning_brief
+from app.scheduler.jobs.naples_poll import poll_naples_inbox
 from app.scheduler.jobs.reminders import send_birthday_reminders, send_lease_reminders
 
 logger = logging.getLogger(__name__)
@@ -40,6 +44,48 @@ def setup_scheduler() -> None:
         id="birthday_reminders",
         replace_existing=True,
     )
+
+    _scheduler.add_job(
+        send_morning_brief,
+        trigger="cron",
+        hour=settings.morning_brief_hour,
+        minute=45,
+        id="morning_brief",
+        replace_existing=True,
+    )
+
+    _scheduler.add_job(
+        send_birthday_prep,
+        trigger="cron",
+        hour=8,
+        minute=15,
+        id="birthday_prep",
+        replace_existing=True,
+    )
+
+    # Two-way email for Gmail: poll the inbox (Gmail has no free inbound webhook)
+    if settings.enable_email and settings.email_provider == "gmail" and settings.email_address and settings.email_app_password:
+        _scheduler.add_job(
+            poll_inbound_email,
+            trigger="interval",
+            seconds=settings.email_poll_interval_seconds,
+            id="email_poll",
+            replace_existing=True,
+            max_instances=1,
+        )
+        logger.info(f"Email inbox polling every {settings.email_poll_interval_seconds}s")
+
+    # Naples house inbox: second monitored mailbox for the new property
+    if settings.naples_email_address and settings.naples_email_app_password:
+        _scheduler.add_job(
+            poll_naples_inbox,
+            trigger="interval",
+            seconds=settings.naples_poll_interval_seconds,
+            id="naples_poll",
+            replace_existing=True,
+            max_instances=1,
+        )
+        logger.info(f"Naples inbox polling every {settings.naples_poll_interval_seconds}s")
 
     _scheduler.start()
     logger.info("Scheduler started")
