@@ -38,6 +38,10 @@ def get_tool_schemas(role: str = "owner") -> list[dict]:
         schemas.extend(lease_tools.TOOL_SCHEMAS)
     if settings.enable_email:
         schemas.extend(email_tools.OWNER_TOOL_SCHEMAS)
+    if settings.enable_outbound:
+        from app.tools import contact_tools, outbound_tools
+        schemas.extend(contact_tools.TOOL_SCHEMAS)
+        schemas.extend(outbound_tools.TOOL_SCHEMAS)
     return schemas
 
 
@@ -55,4 +59,8 @@ def get_handler(tool_name: str, role: str = "owner") -> Callable | None:
         handlers["flag_lease_clauses"] = lease_tools.flag_clauses_handler
     if settings.enable_email:
         handlers.update(email_tools.OWNER_EMAIL_HANDLERS)
+    if settings.enable_outbound:
+        from app.tools import contact_tools, outbound_tools
+        handlers.update(contact_tools.HANDLERS)
+        handlers.update(outbound_tools.HANDLERS)
     return handlers.get(tool_name)

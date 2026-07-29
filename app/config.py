@@ -44,6 +44,15 @@ class Settings(BaseSettings):
     enable_flight_search: bool = True
     enable_lease_review: bool = True
     enable_family_coordination: bool = True
+    # Outbound drafting/approval engine (contacts + draft/send tools).
+    # Off until the approval flow is verified end-to-end in staging.
+    enable_outbound: bool = False
+
+    # Naples house inbox — a second monitored Gmail (IMAP) for the property.
+    # Cord summarizes inbound mail to Cordia and drafts replies for approval.
+    naples_email_address: str = ""
+    naples_email_app_password: str = ""
+    naples_poll_interval_seconds: int = 300
 
     flight_monitor_interval_minutes: int = 60
     morning_brief_hour: int = 7  # local server hour for the daily brief
