@@ -21,6 +21,7 @@ _BASE_HANDLERS: dict[str, Callable] = {
     "log_grandkid_activity": family_tools.log_grandkid_activity_handler,
     "update_family_member_notes": family_tools.update_family_member_notes_handler,
     "schedule_family_event": calendar_tools.schedule_event_handler,
+    "list_events_by_location": calendar_tools.list_events_by_location_handler,
     **family_circle_tools.OWNER_EXTRA_HANDLERS,
 }
 
