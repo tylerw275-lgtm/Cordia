@@ -29,6 +29,9 @@ mail, replies by email, and keeps the same conversation going.
 once they sign it and text in, they can contribute — but they get a **restricted** set
 of abilities and never see her private data.
 
+**The assistant's name is "Cord"** — Cordia's AI chief of staff. (The carrier-registered
+SMS program name remains "Cordia AI by AI-Gen Partners" for compliance.)
+
 ---
 
 ## 3. What it can do today (built & working)
@@ -55,6 +58,34 @@ of abilities and never see her private data.
   or drops 10%+.
 - *Booking* via a hosted Duffel checkout link is built but kept **off by a feature flag
   until it's tested end-to-end** (see §7).
+
+**Outbound communication (draft → approve → send)** *(feature-flagged, see §7)*
+- Cordia can say "tell everyone on the St. Thomas trip we leave Friday" — Cord drafts a
+  **personalized message per person/family**, shows her the drafts, and sends **only after
+  she approves**. SMS goes only to opted-in numbers; everyone else gets email.
+- A secure **contact book**: Cord asks once for a missing email/phone, saves it, and never
+  reveals stored contact details to anyone (lookups return only "on file: yes/no").
+
+**Inbound capture & the Naples house**
+- Contacts Cordia marks trusted (e.g. Kristen sending the school calendar) get their
+  emails captured: every date saved as a family event, a one-line summary texted to
+  Cordia — and third-party mail is treated as information, never instructions.
+- "What's happening for the kids in Norfolk?" lists those events and offers flights
+  around the best dates.
+- The **Naples, FL house inbox** is monitored separately: each property email is
+  summarized to Cordia by text, with replies drafted for her approval.
+
+**Smart flight preferences**
+- Cord asks once for her ranked preferences (non-stop assumed; fastest vs cheapest;
+  cities to avoid; cabin; loyalty programs) and applies them to every search — and when
+  a preference hides a notably faster/cheaper option, it surfaces the tradeoff in one
+  line instead of hiding it. Preferences update as she overrides them.
+
+**Expert-grade answers ("world-class prompting")**
+- Open-ended asks ("help me plan a comedy night") trigger an internal expert brief —
+  role, goal, her tastes/network as constraints, task decomposition — producing a real
+  producer-grade plan, not generic tips. Prompting adapts automatically to whichever
+  Claude model is configured.
 
 **Lease / document review**
 - Analyzes a lease, flags clauses by severity (standard / flag / urgent), stores a
@@ -96,6 +127,8 @@ number verified as a faster fallback) is the #1 thing standing between us and go
   webhook + API send). See `app/services/email_inbound.py`, `app/scheduler/jobs/email_poll.py`.
 - **AI:** Anthropic Claude (`claude-sonnet-4-6`). Per-conversation history, proactive
   memory injection, agentic tool loop (≤10 steps), prompt caching, image/vision support.
+  Model-adaptive prompting profiles (`app/prompts/prompt_profiles.py`) pick thinking/effort
+  params and token budgets per model; deep-work asks get an 8K budget vs 2K conversational.
   Separate, **restricted** system prompt + toolset for family-circle members
   (`sender_role="family"`).
 - **Flights:** Duffel API (`search_flights`, `get_offer`, `create_link_session`,
@@ -105,7 +138,9 @@ number verified as a faster fallback) is the #1 thing standing between us and go
 
 **Feature flags (`app/config.py`)**
 - `enable_flight_search` (on) · `enable_lease_review` (on) · `enable_family_coordination`
-  (on) · `enable_email` (on) · `enable_flight_booking` (**off** until tested).
+  (on) · `enable_email` (on) · `enable_flight_booking` (**off** until tested) ·
+  `enable_outbound` (**off** until the approval flow is verified) · Naples inbox (on when
+  `naples_email_address`/`naples_email_app_password` are set).
 
 **Scheduled jobs (`app/scheduler/scheduler.py`)** — flight monitor (hourly), lease
 reminders (08:00), birthday reminders (07:30), morning brief (~07:45), birthday prep
@@ -114,7 +149,8 @@ reminders (08:00), birthday reminders (07:30), morning brief (~07:45), birthday 
 **Data model (`app/models/`)** — Users; Conversations/Messages; FamilyMembers/
 FamilyEvents/GrandkidActivities; family-circle tables; Trips/FlightWatches/
 PriceSnapshots/FlightBookings; Memories; Leases/LeaseClauses/LeaseReminders; plus
-`sms_consent` and `consent_submissions`.
+`sms_consent` and `consent_submissions`; Contacts (secure address book) and
+OutboundMessages (draft/approve/send queue) — migration `006`.
 
 **Key files to orient around**
 - `app/api/sms.py` — SMS/MMS webhook, keywords, family resolution.
@@ -147,3 +183,9 @@ PriceSnapshots/FlightBookings; Memories; Leases/LeaseClauses/LeaseReminders; plu
 - **Flight booking** (hosted Duffel checkout link) is **built** but gated off
   (`enable_flight_booking=False`) until it's tested end-to-end in Duffel's test mode.
   Search and price-watch are fully live; only the "actually book it" step is gated.
+- **Outbound drafting/sending** is **built** but gated off (`enable_outbound=False`)
+  until the draft→approve→send flow is verified in staging. Flip the flag to enable
+  the contact book and outbound tools.
+- **Naples house inbox** activates automatically once its Gmail address + app password
+  are set in Railway.
+- **WhatsApp** is planned as a fast-follow (needs Meta Business verification).
