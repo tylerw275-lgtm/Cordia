@@ -56,7 +56,10 @@ Last updated: June 2026</p>
 <p>Cordia AI is a private SMS-based AI personal assistant. By texting the service number, you agree to these terms.</p>
 
 <h2>Messaging</h2>
-<p>Message and data rates may apply. All messaging costs incurred by the operator are covered by AI-Gen Partners — there is no charge to the end user beyond standard carrier rates.</p>
+<p>Cordia AI is a personal-assistant text messaging program: subscribers receive conversational replies to their requests and follow-ups they ask for (such as reminders and fare updates). Message frequency varies based on your use of the service. Message and data rates may apply. All messaging costs incurred by the operator are covered by AI-Gen Partners — there is no charge to the end user beyond standard carrier rates.</p>
+
+<h2>Carrier Disclaimer</h2>
+<p>Wireless carriers are not liable for delayed or undelivered messages.</p>
 
 <h2>Opt-Out</h2>
 <p>Reply <strong>STOP</strong> to unsubscribe at any time. Reply <strong>HELP</strong> for support information.</p>
@@ -83,6 +86,13 @@ _OPT_IN = """<!DOCTYPE html>
 <strong>Program number:</strong> +1 (615) 502-1290<br>
 <strong>Operated by:</strong> AI-Gen Partners (a service of Marq LLC)<br>
 <strong>Program type:</strong> Private, two-way personal-assistant text service</p>
+
+<h2>About the operator</h2>
+<p>AI-Gen Partners is a service of Marq LLC, a Norfolk, Virginia technology company. Marq LLC
+builds and operates Cordia AI, a hosted AI personal-assistant software application, as its own
+direct offering. All messages in this program are generated and sent by that application on
+behalf of Marq LLC — never on behalf of any other business. Contact:
+<a href="mailto:tyler@ai-genpartners.com">tyler@ai-genpartners.com</a>.</p>
 
 <h2>What this program is</h2>
 <p>Cordia AI is a private SMS personal assistant operated by AI-Gen Partners and provided
