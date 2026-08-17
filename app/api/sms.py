@@ -22,7 +22,7 @@ _OPT_IN_CONFIRM = (
 )
 _HELP_MSG = (
     "Cordia AI by AI-Gen Partners — your personal assistant. "
-    "Msg & data rates may apply. Support: tyler@marqbenefits.com. "
+    "Msg & data rates may apply. Support: tyler@aigenpartners.com. "
     "Reply STOP to unsubscribe."
 )
 _STOP_CONFIRM = (
