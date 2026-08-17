@@ -20,8 +20,10 @@ class Settings(BaseSettings):
     cordia_phone_number: str = ""
     cordia_test_phone_number: str = ""
 
-    # Public URL where compliance pages (/consent, /privacy, /terms) are served
-    public_base_url: str = "https://cordia-production.up.railway.app"
+    # Public URL where compliance pages (/consent, /privacy, /terms) are served.
+    # Branded custom domain (CNAME -> Railway); the *.up.railway.app URL keeps
+    # serving the same pages. Override with PUBLIC_BASE_URL env if needed.
+    public_base_url: str = "https://cordia.aigenpartners.com"
 
     duffel_access_token: str = ""
     duffel_webhook_secret: str = ""  # from the Duffel dashboard webhook config
