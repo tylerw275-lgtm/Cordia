@@ -173,7 +173,7 @@ you can reach the assistant by email instead — text messaging is never require
 Cordia AI.</p>
 
 <div class="form-box">
-<h2>SMS Messaging Consent — Cordia AI by AI-Gen Partners</h2>
+<h2>Customer Care SMS Consent — Cordia AI by AI-Gen Partners</h2>
 
 <p><strong>Program:</strong> Cordia AI — a private, two-way SMS personal-assistant service<br>
 <strong>Program number:</strong> +1 (615) 502-1290<br>
@@ -190,19 +190,23 @@ Cordia AI.</p>
 
 <div class="checkbox-row">
   <input type="checkbox" name="consent" id="consent" value="yes" required>
-  <label for="consent">I authorize AI-Gen Partners to send me recurring SMS text messages
-  from Cordia AI, my personal assistant, at the mobile number provided above. I understand
-  that message frequency varies based on my own use of the service, that message and data
-  rates may apply, that I can reply <strong>STOP</strong> at any time to unsubscribe and
-  <strong>HELP</strong> for assistance, and that consent is not a condition of any purchase.
-  I have reviewed the <a href="/privacy">Privacy Policy</a> and
-  <a href="/terms">Terms of Service</a>. My mobile number and opt-in information will not
-  be shared with third parties.</label>
+  <label for="consent">By providing a telephone number, clicking this button, and submitting
+  the form, you are consenting to be contacted by SMS text message from AI-Gen Partners,
+  regarding Customer Care messages, (our message frequency may vary). Message &amp; data
+  rates apply. Reply <strong>STOP</strong> to unsubscribe from further messaging from
+  AI-Gen Partners. Reply <strong>HELP</strong> for more information. Consent is not a
+  condition of any purchase, service, or transaction. See our
+  <a href="/privacy">Privacy Policy</a> (containing our SMS Terms) at the bottom of the
+  page for more information.</label>
 </div>
 
 <button type="submit">Submit Consent</button>
 </form>
 </div>
+
+<p class="note">Consent is provided exclusively for AI-Gen Partners to contact the user
+based on the selection, not any other third parties mentioned on the site. SMS opt-in data
+is not shared/sold to third parties for promotional/marketing purposes.</p>
 
 <h2>What happens after you submit</h2>
 <p>1. AI-Gen Partners records and retains your consent.<br>
