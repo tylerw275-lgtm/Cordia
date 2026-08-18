@@ -154,25 +154,10 @@ button:hover{background:#155830}
 .error{color:#a4262c;font-weight:bold}
 """
 
-_CONSENT_FORM = f"""<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SMS Consent Form — Cordia AI</title>
-<style>{_CONSENT_STYLE}</style>
-</head>
-<body>
-<h1>Cordia AI — SMS Program Consent Form</h1>
-<p class="note">Cordia AI is a private, invitation-only SMS personal-assistant program
-operated by AI-Gen Partners (Marq LLC). This form is how each authorized recipient gives
-prior express written consent before being enrolled. Enrollment is limited to
-pre-authorized individuals — submitting this form does not grant service access to the
-general public.</p>
-<p class="note"><strong>Opting in to SMS is optional and is not a condition of any
-purchase, service, or transaction.</strong> If you would rather not receive text messages,
-you can reach the assistant by email instead — text messaging is never required to use
-Cordia AI.</p>
-
-<div class="form-box">
+# The Customer Care opt-in form. Shared verbatim between /consent and /opt-in so
+# the page reviewers open from the registered Call-to-Action shows the form
+# exactly as described in the campaign submission.
+_FORM_SECTION = """<div class="form-box">
 <h2>Customer Care SMS Consent — Cordia AI by AI-Gen Partners</h2>
 
 <p><strong>Program:</strong> Cordia AI — a private, two-way SMS personal-assistant service<br>
@@ -206,7 +191,28 @@ Cordia AI.</p>
 
 <p class="note">Consent is provided exclusively for AI-Gen Partners to contact the user
 based on the selection, not any other third parties mentioned on the site. SMS opt-in data
-is not shared/sold to third parties for promotional/marketing purposes.</p>
+is not shared/sold to third parties for promotional/marketing purposes.</p>"""
+
+
+_CONSENT_FORM = f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SMS Consent Form — Cordia AI</title>
+<style>{_CONSENT_STYLE}</style>
+</head>
+<body>
+<h1>Cordia AI — SMS Program Consent Form</h1>
+<p class="note">Cordia AI is a private, invitation-only SMS personal-assistant program
+operated by AI-Gen Partners (Marq LLC). This form is how each authorized recipient gives
+prior express written consent before being enrolled. Enrollment is limited to
+pre-authorized individuals — submitting this form does not grant service access to the
+general public.</p>
+<p class="note"><strong>Opting in to SMS is optional and is not a condition of any
+purchase, service, or transaction.</strong> If you would rather not receive text messages,
+you can reach the assistant by email instead — text messaging is never required to use
+Cordia AI.</p>
+
+{_FORM_SECTION}
 
 <h2>What happens after you submit</h2>
 <p>1. AI-Gen Partners records and retains your consent.<br>
@@ -241,6 +247,16 @@ Message &amp; data rates may apply. Questions: tyler@aigenpartners.com</p>
 <a href="/privacy">Privacy Policy</a> &nbsp;|&nbsp; <a href="/terms">Terms of Service</a></p>
 </body>
 </html>"""
+
+
+# Embed the consent form (and its styles) on the opt-in disclosure page, right
+# below the program header — the registered CTA says users who open this page
+# "see a form to fill out," so the form must be here verbatim.
+_OPT_IN = _OPT_IN.replace("</style>", _CONSENT_STYLE + "</style>")
+_OPT_IN = _OPT_IN.replace(
+    "<h2>What this program is</h2>",
+    "<h2>Opt in to Cordia AI text messages</h2>\n" + _FORM_SECTION + "\n\n<h2>What this program is</h2>",
+)
 
 
 @router.get("/opt-in", include_in_schema=False)
