@@ -16,7 +16,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.outbound import OutboundMessage
-from app.services import email_service, twilio_service
+from app.services import email_service, sms_service
 from app.tools.contact_tools import resolve_recipient
 
 logger = logging.getLogger(__name__)
@@ -244,7 +244,7 @@ async def send_outbound_handler(db: AsyncSession, **kw) -> dict:
                 if not await _sms_consent_ok(db, d.to_address):
                     ok, reason = False, "sms_consent_missing"
                 else:
-                    await twilio_service.send_sms(to=d.to_address, body=d.body)
+                    await sms_service.send_sms(to=d.to_address, body=d.body)
                     ok, reason = True, None
         except Exception as e:
             ok, reason = False, str(e)

@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db
 from app.config import settings
 from app.models.trips import FlightBooking
-from app.services import claude_service, duffel_service, twilio_service
+from app.services import claude_service, duffel_service, sms_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -91,7 +91,7 @@ async def _handle_order_created(db: AsyncSession, order_id: str) -> None:
             f"Total ${order.get('total_amount')}. I've saved all the details — "
             "just ask if you need them."
         )
-        await twilio_service.send_sms(to=settings.cordia_phone_number, body=msg)
+        await sms_service.send_sms(to=settings.cordia_phone_number, body=msg)
         await claude_service.record_assistant_message(db, settings.cordia_phone_number, msg)
     logger.info(f"Duffel booking recorded: {order_id}")
 
@@ -129,7 +129,7 @@ async def duffel_webhook(
                 f"Heads up — the airline changed your flight (confirmation {ref}). "
                 "Want me to pull up the new details?"
             )
-            await twilio_service.send_sms(to=settings.cordia_phone_number, body=msg)
+            await sms_service.send_sms(to=settings.cordia_phone_number, body=msg)
             await claude_service.record_assistant_message(db, settings.cordia_phone_number, msg)
     else:
         logger.info(f"Duffel webhook: ignoring event type {event_type}")

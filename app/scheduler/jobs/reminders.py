@@ -6,7 +6,7 @@ from sqlalchemy import select
 from app.config import settings
 from app.database import get_db_session
 from app.models.real_estate import LeaseReminder
-from app.services import family_service, twilio_service
+from app.services import family_service, sms_service
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ async def send_lease_reminders() -> None:
         reminders = result.scalars().all()
         for reminder in reminders:
             if settings.cordia_phone_number:
-                await twilio_service.send_sms(to=settings.cordia_phone_number, body=reminder.message)
+                await sms_service.send_sms(to=settings.cordia_phone_number, body=reminder.message)
             reminder.sent = True
             reminder.sent_at = now
         if reminders:
@@ -48,4 +48,4 @@ async def send_birthday_reminders() -> None:
                 continue
 
             if settings.cordia_phone_number:
-                await twilio_service.send_sms(to=settings.cordia_phone_number, body=msg)
+                await sms_service.send_sms(to=settings.cordia_phone_number, body=msg)
