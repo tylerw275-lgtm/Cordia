@@ -9,7 +9,7 @@ from sqlalchemy import select
 from app.config import settings
 from app.database import get_db_session
 from app.models.trips import FlightWatch, PriceSnapshot
-from app.services import family_circle_service, family_service, twilio_service
+from app.services import family_circle_service, family_service, sms_service
 
 logger = logging.getLogger(__name__)
 
@@ -71,5 +71,5 @@ async def send_morning_brief() -> None:
     async with get_db_session() as db:
         brief = await compose_brief(db)
         if brief:
-            await twilio_service.send_sms(to=settings.cordia_phone_number, body=brief)
+            await sms_service.send_sms(to=settings.cordia_phone_number, body=brief)
             logger.info("Sent morning brief")

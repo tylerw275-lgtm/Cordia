@@ -12,6 +12,17 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     claude_model: str = "claude-sonnet-4-6"
 
+    # Active SMS provider: "twilio" or "signalhouse". Everything above the
+    # send/receive layer (consent, keywords, drafting) is provider-agnostic.
+    sms_provider: str = "twilio"
+
+    # Signal House (10DLC campaign + number live here)
+    signalhouse_api_key: str = ""
+    signalhouse_phone_number: str = ""  # e.g. +16292259067
+    signalhouse_base_url: str = "https://api.signalhouse.io"
+    signalhouse_send_path: str = "/message/send"  # confirm against their docs
+    signalhouse_webhook_secret: str = ""  # shared secret for /webhook/signalhouse
+
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
     twilio_api_key_sid: str = ""

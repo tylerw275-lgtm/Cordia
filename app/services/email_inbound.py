@@ -108,9 +108,9 @@ async def process_inbound_email(db: AsyncSession, sender: str, subject: str, bod
         summary = await claude_service.chat(db, conversation.id, wrapped, sender_role="owner")
         notify = f"📬 From {member.name}: {summary}"
         if settings.cordia_phone_number:
-            from app.services import twilio_service
+            from app.services import sms_service
             try:
-                await twilio_service.send_sms(to=settings.cordia_phone_number, body=notify)
+                await sms_service.send_sms(to=settings.cordia_phone_number, body=notify)
             except Exception as e:
                 logger.error(f"Could not SMS Cordia the capture summary: {e}")
         elif settings.owner_email:

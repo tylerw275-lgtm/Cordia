@@ -9,7 +9,7 @@ from datetime import date
 
 from app.config import settings
 from app.database import get_db_session
-from app.services import claude_service, family_circle_service, family_service, twilio_service
+from app.services import claude_service, family_circle_service, family_service, sms_service
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +72,7 @@ async def send_birthday_prep() -> None:
             if (bday - today).days != lead:
                 continue
             msg = await compose_birthday_prep(db, m, lead)
-            await twilio_service.send_sms(to=settings.cordia_phone_number, body=msg)
+            await sms_service.send_sms(to=settings.cordia_phone_number, body=msg)
             # Record so Cordia's reply ("yes, ask them") has context
             await claude_service.record_assistant_message(db, settings.cordia_phone_number, msg)
             logger.info(f"Sent birthday prep for {m.name}")

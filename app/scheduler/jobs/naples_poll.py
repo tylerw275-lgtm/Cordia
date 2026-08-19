@@ -16,7 +16,7 @@ import logging
 from app.config import settings
 from app.database import get_db_session
 from app.scheduler.jobs.email_poll import _fetch_unseen_sync
-from app.services import claude_service, email_inbound, twilio_service
+from app.services import claude_service, email_inbound, sms_service
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ async def poll_naples_inbox() -> None:
                 )
                 summary = await claude_service.chat(db, conversation.id, wrapped, sender_role="owner")
                 if settings.cordia_phone_number:
-                    await twilio_service.send_sms(
+                    await sms_service.send_sms(
                         to=settings.cordia_phone_number, body=f"🏠 Naples house: {summary}"
                     )
             except Exception as e:
