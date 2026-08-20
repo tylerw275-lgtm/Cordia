@@ -60,17 +60,17 @@ SMS program name remains "Cordia AI by AI-Gen Partners" for compliance.)
   until it's tested end-to-end** (see §7).
 
 **Outbound communication (draft → approve → send)** *(feature-flagged, see §7)*
-- Cordia can say "tell everyone on the St. Thomas trip we leave Friday" — Cord drafts a
+- Cordia can say "tell everyone on the trip we leave Friday" — Cord drafts a
   **personalized message per person/family**, shows her the drafts, and sends **only after
   she approves**. SMS goes only to opted-in numbers; everyone else gets email.
 - A secure **contact book**: Cord asks once for a missing email/phone, saves it, and never
   reveals stored contact details to anyone (lookups return only "on file: yes/no").
 
 **Inbound capture & the Naples house**
-- Contacts Cordia marks trusted (e.g. Kristen sending the school calendar) get their
+- Contacts Cordia marks trusted (e.g. a relative sending the school calendar) get their
   emails captured: every date saved as a family event, a one-line summary texted to
   Cordia — and third-party mail is treated as information, never instructions.
-- "What's happening for the kids in Norfolk?" lists those events and offers flights
+- "What's happening for the kids in <city>?" lists those events and offers flights
   around the best dates.
 - The **Naples, FL house inbox** is monitored separately: each property email is
   summarized to Cordia by text, with replies drafted for her approval.
@@ -184,7 +184,7 @@ OutboundMessages (draft/approve/send queue) — migration `006`.
    STOP/START/HELP; photo message; web consent form; a family-member enrollment.
 5. **Set `FAMILY_SEED_JSON` in Railway** (the family roster as JSON — it is
    deliberately not in the repo). Then loading is automatic. The roster (members, birthdays,
-   kids) loads on every boot from `app/data/family_seed.py`; the load is idempotent,
+   kids) loads on every boot from the `FAMILY_SEED_JSON` variable; the load is idempotent,
    so a redeploy or a database reset self-heals. Check it with
    `GET /health/data`. Set `SEED_FAMILY_ON_STARTUP=false` to turn it off.
 6. **Optional, when ready:** turn on `enable_flight_booking` and complete a Duffel

@@ -119,3 +119,77 @@ def test_family_role_prompt_never_includes_the_roster():
     text = " ".join(b["text"] for b in blocks)
     assert "FAMILY ROSTER" not in text
     assert "Nico" not in text  # the fixture's alias
+
+
+# ---------------------------------------------------------------------------
+# The prompt itself must carry no family facts. Everything person-specific
+# reaches the model through the roster block, which is built from the database.
+# ---------------------------------------------------------------------------
+
+def test_prompt_carries_no_family_facts_of_its_own(seed_doc):
+    """With no roster, the assembled prompt must not name anyone or state a
+    personal fact. This is the guard that stops a name creeping back in."""
+    prompt = " ".join(b["text"] for b in build_system_prompt(None, family_roster=None))
+
+    for member in seed_doc.members:
+        assert member.name not in prompt
+        first = member.name.split()[0]
+        assert first not in prompt, f"{first} appears in the prompt itself"
+        for alias in member.aliases or []:
+            assert alias not in prompt
+        for interest in member.interests or []:
+            # a bare interest word may legitimately appear; a *named* pairing may not
+            assert f"{first} {interest}" not in prompt
+        if member.city:
+            assert member.city not in prompt
+
+
+def test_prompt_has_no_hardcoded_alias_mapping(seed_doc):
+    """The mapping lives in the aliases column now, not in the prompt."""
+    prompt = " ".join(b["text"] for b in build_system_prompt(None, family_roster="R"))
+    for member in seed_doc.members:
+        for alias in member.aliases or []:
+            assert alias not in prompt
+
+
+def test_prompt_still_explains_how_to_resolve_an_unfamiliar_name():
+    """Removing the mapping must not remove the behaviour."""
+    prompt = " ".join(b["text"] for b in build_system_prompt(None, family_roster="R"))
+    assert "get_family_member" in prompt
+    assert "former name" in prompt.lower()
+
+
+def test_prompt_no_longer_instructs_denial():
+    """The old rule told Cord to deny a name difference even if asked directly."""
+    prompt = " ".join(b["text"] for b in build_system_prompt(None, family_roster="R"))
+    assert "not even if she asks directly" not in prompt
+    assert "must remain invisible to her" not in prompt
+    assert "answer honestly" in prompt
+
+
+@pytest.mark.asyncio
+async def test_family_facts_reach_the_model_through_the_roster(db, seed_doc):
+    """The facts deleted from the prompt must still arrive, via the roster."""
+    await seed_family(db, seed_doc)
+    roster = await family_service.get_family_roster_text(db)
+    prompt = " ".join(b["text"] for b in build_system_prompt(None, family_roster=roster))
+
+    for member in seed_doc.members:
+        assert member.name in prompt
+        for interest in member.interests or []:
+            assert interest in prompt
+    # parent links, so "which of her sons is this child's father" is answerable
+    assert "child of Dominic Rivers" in prompt
+
+
+@pytest.mark.asyncio
+async def test_long_personality_notes_are_not_truncated_to_200(db):
+    """Detail that moved out of the prompt lands in personality_notes; a 200-char
+    cap silently dropped the tail of the longest profile."""
+    note = "A. " + ("detail " * 40) + "END-OF-NOTE"
+    assert 200 < len(note) <= 400
+    await family_service.create_family_member(
+        db, name="Long Note Person", relationship="granddaughter", personality_notes=note,
+    )
+    roster = await family_service.get_family_roster_text(db)
+    assert "END-OF-NOTE" in roster

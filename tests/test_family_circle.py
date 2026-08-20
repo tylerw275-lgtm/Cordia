@@ -12,17 +12,17 @@ async def _make_member(db, name, phone, relationship="son"):
 
 @pytest.mark.asyncio
 async def test_resolve_by_phone_and_access_gating(db):
-    await _make_member(db, "Aaron Test", "5555550101")
+    await _make_member(db, "Dominic Test", "5555550101")
 
     # Twilio sends +1 prefix; resolver normalizes to last 10 digits
     m = await circle.resolve_member_by_phone(db, "+15555550101")
-    assert m is not None and m.name == "Aaron Test"
+    assert m is not None and m.name == "Dominic Test"
 
     # Access is denied by default
     assert m.has_circle_access is False
 
     # Granting flips the flag
-    granted = await circle.grant_circle_access(db, "Aaron Test")
+    granted = await circle.grant_circle_access(db, "Dominic Test")
     assert granted.has_circle_access is True
 
 
@@ -34,9 +34,9 @@ async def test_unknown_phone_resolves_to_none(db):
 
 @pytest.mark.asyncio
 async def test_input_surfacing_flow(db):
-    aaron = await _make_member(db, "Aaron Two", "6150000001")
+    parent = await _make_member(db, "Dominic Two", "6150000001")
 
-    item = await circle.add_input(db, aaron.id, "gift_idea", "An animal encounter day")
+    item = await circle.add_input(db, parent.id, "gift_idea", "An animal encounter day")
     pending = await circle.get_unsurfaced_inputs(db)
     assert len(pending) == 1
 
@@ -46,12 +46,12 @@ async def test_input_surfacing_flow(db):
 
 @pytest.mark.asyncio
 async def test_request_visible_then_fulfilled(db):
-    aaron = await _make_member(db, "Aaron Three", "6150000002")
-    await circle.grant_circle_access(db, "Aaron Three")
+    parent = await _make_member(db, "Dominic Three", "6150000002")
+    await circle.grant_circle_access(db, "Dominic Three")
 
-    req = await circle.create_request(db, "gift ideas for Bea")
-    open_reqs = await circle.get_open_requests_for(db, aaron)
-    assert any(r.prompt == "gift ideas for Bea" for r in open_reqs)
+    req = await circle.create_request(db, "gift ideas for a grandchild")
+    open_reqs = await circle.get_open_requests_for(db, parent)
+    assert any(r.prompt == "gift ideas for a grandchild" for r in open_reqs)
 
     await circle.fulfill_request(db, req.id)
     assert all(r.fulfilled for r in [req])

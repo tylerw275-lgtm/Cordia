@@ -8,7 +8,7 @@ from app.services import family_service
 async def test_create_and_retrieve_family_member(db):
     member = await family_service.create_family_member(
         db,
-        name="Emma",
+        name="Wren",
         relationship="granddaughter",
         city="Nashville",
         state="TN",
@@ -19,7 +19,7 @@ async def test_create_and_retrieve_family_member(db):
     )
     assert member.id is not None
 
-    found = await family_service.get_family_member_by_name(db, "Emma")
+    found = await family_service.get_family_member_by_name(db, "Wren")
     assert found is not None
     assert found.interests == ["dinosaurs", "art", "swimming"]
     assert found.grade_level == "4th"
@@ -45,9 +45,9 @@ async def test_list_upcoming_events(db):
 @pytest.mark.asyncio
 async def test_lookup_by_alias(db):
     await family_service.create_family_member(
-        db, name="Dominic Rivers", relationship="son", aliases=["Brad"]
+        db, name="Dominic Rivers", relationship="son", aliases=["Nico"]
     )
-    found = await family_service.get_family_member_by_name(db, "brad")
+    found = await family_service.get_family_member_by_name(db, "nico")
     assert found is not None and found.name == "Dominic Rivers"
 
 
@@ -60,7 +60,7 @@ async def test_lookup_with_apostrophe_is_safe(db):
 @pytest.mark.asyncio
 async def test_lookup_injection_attempt_finds_nothing_and_preserves_data(db):
     await family_service.create_family_member(
-        db, name="Dominic Rivers", relationship="son", aliases=["Brad"]
+        db, name="Dominic Rivers", relationship="son", aliases=["Nico"]
     )
     # A boolean-injection payload must be treated as a literal name.
     assert await family_service.get_family_member_by_name(db, "' OR '1'='1") is None
@@ -116,3 +116,30 @@ async def test_upcoming_one_time_event_still_listed(db):
     )
     events = await family_service.list_upcoming_events(db, days_ahead=30)
     assert [e.title for e in events] == ["School play"]
+
+
+@pytest.mark.asyncio
+async def test_exact_alias_beats_a_substring_name_match(db):
+    """The prompt no longer carries the name mapping, so this lookup is the only
+    thing that resolves a former name. An alias hit used to land in the lowest
+    ranking tier and lose to any member whose name merely contained it."""
+    await family_service.create_family_member(
+        db, name="Nicolas Rivers", relationship="in-law",
+    )
+    await family_service.create_family_member(
+        db, name="Dominic Rivers", relationship="son", aliases=["Nico"],
+    )
+    found = await family_service.get_family_member_by_name(db, "Nico")
+    assert found.name == "Dominic Rivers"
+
+
+@pytest.mark.asyncio
+async def test_exact_name_still_beats_an_alias(db):
+    await family_service.create_family_member(
+        db, name="Dominic Rivers", relationship="son", aliases=["Theo"],
+    )
+    await family_service.create_family_member(
+        db, name="Theo", relationship="grandson",
+    )
+    found = await family_service.get_family_member_by_name(db, "Theo")
+    assert found.name == "Theo"

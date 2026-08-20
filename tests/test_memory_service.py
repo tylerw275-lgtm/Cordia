@@ -37,11 +37,11 @@ async def test_memory_category_filter(db):
 @pytest.mark.asyncio
 async def test_search_matches_keyword_from_a_full_sentence(db):
     mem = await memory_service.store_memory(
-        db, category="fact", subject="Bea gift ideas",
-        content="Bea loves boba tea and getting her nails done", source="test",
+        db, category="fact", subject="Pia gift ideas",
+        content="Pia loves boba tea and getting her nails done", source="test",
     )
     results = await memory_service.search_memories(
-        db, query="What do you know about my family and what Bea is into?"
+        db, query="What do you know about my family and what Pia is into?"
     )
     assert any(m.id == mem.id for m in results)
 
@@ -51,8 +51,8 @@ async def test_search_ranks_multi_term_matches_first(db):
     weak = await memory_service.store_memory(
         db, category="fact", subject="travel", content="She enjoys travel", source="test")
     strong = await memory_service.store_memory(
-        db, category="fact", subject="Bea travel", content="Bea enjoys travel and boba", source="test")
-    results = await memory_service.search_memories(db, query="what does Bea like about travel and boba")
+        db, category="fact", subject="Pia travel", content="Pia enjoys travel and boba", source="test")
+    results = await memory_service.search_memories(db, query="what does Pia like about travel and boba")
     assert results[0].id == strong.id
     assert weak.id in [m.id for m in results]
 

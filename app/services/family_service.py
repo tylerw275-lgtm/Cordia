@@ -28,7 +28,7 @@ async def get_family_member_by_name(db: AsyncSession, name: str) -> FamilyMember
 
     Callers pass model- and API-supplied text here, so every comparison is
     parameterized and LIKE-escaped. Results are ordered so an exact match always
-    beats a substring match — otherwise "Bea" could resolve to whichever row the
+    beats a substring match — otherwise a short name could resolve to whichever row the
     planner happened to return first.
     """
     from sqlalchemy import case, func
@@ -42,11 +42,16 @@ async def get_family_member_by_name(db: AsyncSession, name: str) -> FamilyMember
         "EXISTS (SELECT 1 FROM unnest(aliases) a WHERE lower(a) LIKE :alias_pat ESCAPE '\\')"
     ).bindparams(alias_pat=pattern)
 
+    alias_exact = sa.text(
+        "EXISTS (SELECT 1 FROM unnest(aliases) a WHERE lower(a) = :alias_exact)"
+    ).bindparams(alias_exact=name_lower)
+
     exactness = case(
         (func.lower(FamilyMember.name) == name_lower, 0),
         (func.lower(FamilyMember.nickname) == name_lower, 1),
-        (func.lower(FamilyMember.name).like(f"{like_escape(name_lower)}%", escape="\\"), 2),
-        else_=3,
+        (alias_exact, 2),
+        (func.lower(FamilyMember.name).like(f"{like_escape(name_lower)}%", escape="\\"), 3),
+        else_=4,
     )
 
     result = await db.execute(
@@ -298,6 +303,11 @@ async def get_grandkid_activity_balance(db: AsyncSession) -> dict:
 # something false in every prompt.
 _CHILD_RELATIONSHIPS = frozenset({"son", "daughter", "grandson", "granddaughter"})
 
+# Per-member note budget in the roster. Personal detail that used to be hardcoded
+# in the system prompt now arrives through this field, so a tight cap silently
+# drops the very guidance it replaced.
+_NOTE_LIMIT = 400
+
 _NO_FAMILY_LOADED = (
     "FAMILY PROFILES: none are loaded in the database. Do not invent or guess "
     "family details, and do not ask Cordia to re-enter them — tell her the "
@@ -344,7 +354,7 @@ def format_family_roster(members: Sequence[FamilyMember], today: date | None = N
             parts.append("likes " + ", ".join(m.interests))
         if m.personality_notes:
             note = " ".join(m.personality_notes.split())
-            parts.append(note if len(note) <= 200 else note[:197] + "...")
+            parts.append(note if len(note) <= _NOTE_LIMIT else note[: _NOTE_LIMIT - 3] + "...")
         lines.append("- " + "; ".join(parts))
 
     return (

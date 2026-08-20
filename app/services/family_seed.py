@@ -62,10 +62,10 @@ async def _find_exact(db: AsyncSession, name: str) -> FamilyMember | None:
 
     Deliberately not family_service.get_family_member_by_name: that does
     substring matching, which is right for "who does Cordia mean?" and wrong
-    for "does this row already exist?". Seeding "Sarah" through the fuzzy
-    resolver matches a pre-existing "Sarah Jane Kowalski" and backfills a
-    different person's phone, birthday and address onto her — and because the
-    real row then never gets created, every later boot repeats it.
+    for "does this row already exist?". A single-word roster name resolved
+    through the fuzzy resolver matches any pre-existing row that merely contains
+    it, and backfills a different person's phone, birthday and address onto them
+    — and because the real row never gets created, every later boot repeats it.
     """
     result = await db.execute(
         select(FamilyMember).where(func.lower(FamilyMember.name) == name.strip().lower())

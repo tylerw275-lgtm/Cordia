@@ -28,7 +28,7 @@ TOOL_SCHEMAS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "name": {"type": "string", "description": "Full name (e.g. 'Kristen Wilkinson')"},
+                "name": {"type": "string", "description": "Full name (e.g. 'Jordan Ellis')"},
                 "email": {"type": "string", "description": "Email address, if given"},
                 "phone": {"type": "string", "description": "Mobile number, if given"},
                 "relationship": {"type": "string", "description": "e.g. 'daughter-in-law', 'Naples property manager'"},

@@ -96,7 +96,7 @@ def test_orphaned_tool_result_is_dropped():
     # What a truncated window produces: results with no preceding tool_use.
     out = claude_service._sanitize_history([
         _tool_result(), {"role": "assistant", "content": [{"type": "text", "text": "Three sons."}]},
-        _user("and Brighton?"),
+        _user("and the youngest?"),
     ])
     assert_valid_transcript(out)
     assert all(

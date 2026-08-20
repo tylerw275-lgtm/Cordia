@@ -16,7 +16,7 @@ TOOL_SCHEMAS = [
                 },
                 "subject": {
                     "type": "string",
-                    "description": "Brief label for this memory (e.g. 'seat preference', 'grandchild Emma interests')",
+                    "description": "Brief label for this memory (e.g. 'seat preference', 'grandchild interests')",
                 },
                 "content": {
                     "type": "string",
@@ -25,7 +25,7 @@ TOOL_SCHEMAS = [
                 "tags": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Optional tags for retrieval (e.g. ['travel', 'flights', 'emma'])",
+                    "description": "Optional tags for retrieval (e.g. ['travel', 'flights', 'gifts'])",
                 },
             },
             "required": ["category", "subject", "content"],

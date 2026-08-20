@@ -70,7 +70,7 @@ async def test_family_roster_reaches_the_model(db, seed_doc, mocker):
 
     create = mocker.patch.object(
         claude_service._client.messages, "create",
-        new=mocker.AsyncMock(return_value=_Reply("Three sons: Aaron, Ryan and Tyler.")),
+        new=mocker.AsyncMock(return_value=_Reply("Three sons: Dominic, Elliot and Theodore.")),
     )
     mocker.patch("app.services.sms_service.send_sms", new=mocker.AsyncMock())
     mocker.patch("app.config.settings.cordia_phone_number", "+15551234567")
