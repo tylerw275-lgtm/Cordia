@@ -19,8 +19,8 @@ class Settings(BaseSettings):
     # Signal House (10DLC campaign + number live here)
     signalhouse_api_key: str = ""
     signalhouse_phone_number: str = ""  # e.g. +16292259067
-    signalhouse_base_url: str = "https://api.signalhouse.io"
-    signalhouse_send_path: str = "/message/send"  # confirm against their docs
+    signalhouse_base_url: str = "https://v2.signalhouse.io"
+    signalhouse_send_path: str = "/message/sms"
     signalhouse_webhook_secret: str = ""  # shared secret for /webhook/signalhouse
 
     twilio_account_sid: str = ""
