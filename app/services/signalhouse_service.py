@@ -3,7 +3,7 @@
 Verified against Signal House's own API client (app2.signalhouse.io/docs):
 - Send:  POST https://v2.signalhouse.io/message/sms
          headers: Authorization: Bearer <apiKey>
-         body: {senderPhoneNumber, recipientPhoneNumber, messageBody}
+         body: {senderPhoneNumber, recipientPhoneNumber: [array], messageBody}
          Phone numbers are digits-only (no '+'), e.g. "16292259067".
 - Inbound webhook events arrive as {event: "MESSAGE_RECEIVED",
   metaData: {Message: {senderPhoneNumber, messageBody, ...}}} — handled in
@@ -43,7 +43,7 @@ async def send_sms(to: str, body: str) -> None:
         for chunk in _split_message(body):
             payload = {
                 "senderPhoneNumber": sender,
-                "recipientPhoneNumber": _digits(to),
+                "recipientPhoneNumber": [_digits(to)],
                 "messageBody": chunk,
             }
             try:
