@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from collections import OrderedDict
 from datetime import datetime, timezone
@@ -127,6 +128,24 @@ async def _process_inbound_bg(from_number: str, body: str, media: list) -> None:
         logger.error(f"Background inbound processing failed: {e}", exc_info=True)
 
 
+# If a reply is still being composed after this many seconds, send a short
+# courtesy note so she isn't left wondering whether it landed.
+_SLOW_REPLY_SECONDS = 4.0
+_WORKING_NOTE = "Got it - working on this now, one moment."
+
+
+async def _notify_if_slow(to: str) -> None:
+    """Sleep, then send a brief 'working on it' note. Cancelled if the real
+    reply is ready first, so fast answers never get a preamble."""
+    try:
+        await asyncio.sleep(_SLOW_REPLY_SECONDS)
+        await sms_service.send_sms(to=to, body=_WORKING_NOTE)
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        logger.warning(f"Could not send slow-reply note: {e}")
+
+
 async def _process_inbound(db: AsyncSession, from_number: str, body: str, media: list) -> None:
     """Provider-agnostic inbound SMS handling: keywords, sender resolution,
     consent recording, family welcome, and the AI conversation. Both the
@@ -178,13 +197,16 @@ async def _process_inbound(db: AsyncSession, from_number: str, body: str, media:
     # Download images only now that the sender is authorized (Twilio MMS only)
     images = await twilio_service.fetch_image_blocks(media) if media else []
 
+    slow_note = asyncio.create_task(_notify_if_slow(from_number))
     try:
         conversation = await claude_service.get_or_create_conversation(db, from_number)
         response_text = await claude_service.chat(
             db, conversation.id, body, sender_role=role, sender_member=member, images=images
         )
+        slow_note.cancel()
         await sms_service.send_sms(to=from_number, body=response_text)
     except Exception as e:
+        slow_note.cancel()
         logger.error(f"Error processing SMS: {e}", exc_info=True)
         await sms_service.send_sms(
             to=from_number,
