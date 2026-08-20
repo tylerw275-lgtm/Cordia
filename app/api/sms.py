@@ -189,12 +189,14 @@ async def receive_sms(
 
 @router.post("/webhook/signalhouse")
 async def receive_signalhouse_sms(request: Request, db: AsyncSession = Depends(get_db)) -> dict:
-    """Inbound SMS from Signal House. Configure the webhook in their dashboard
-    as: https://cordia.aigenpartners.com/webhook/signalhouse?secret=<SIGNALHOUSE_WEBHOOK_SECRET>
+    """Inbound SMS from Signal House. Register in their dashboard (webhook
+    authType NONE) as:
+    https://cordia.aigenpartners.com/webhook/signalhouse?secret=<SIGNALHOUSE_WEBHOOK_SECRET>
 
-    Payload field names vary by provider; we accept the common variants and
-    finalize against their docs. Authenticated by shared secret (query param
-    or X-Webhook-Secret header)."""
+    Event envelope (per their docs): {timestamp, event: "MESSAGE_RECEIVED",
+    identifier, metaData: {Message: {senderPhoneNumber, recipientPhoneNumber,
+    messageBody, direction: "INBOUND", ...}}}. Other event types (delivery
+    receipts, balance alerts) are acknowledged and ignored."""
     supplied = request.query_params.get("secret") or request.headers.get("X-Webhook-Secret", "")
     if not settings.signalhouse_webhook_secret or supplied != settings.signalhouse_webhook_secret:
         if not settings.debug:
@@ -205,20 +207,26 @@ async def receive_signalhouse_sms(request: Request, db: AsyncSession = Depends(g
         payload = await request.json()
     except Exception:
         payload = dict(await request.form())
-    if isinstance(payload, dict) and isinstance(payload.get("data"), dict):
-        payload = payload["data"]
+    if not isinstance(payload, dict):
+        return {"status": "ignored"}
 
-    from_number = next(
-        (payload.get(k) for k in ("from", "From", "fromNumber", "from_number", "sender", "msisdn") if payload.get(k)),
-        None,
-    )
-    body = next(
-        (payload.get(k) for k in ("text", "body", "Body", "message", "content") if payload.get(k)),
-        "",
-    )
+    event = payload.get("event") or payload.get("eventType") or ""
+    if event and event != "MESSAGE_RECEIVED":
+        return {"status": "ok", "ignored_event": event}
+
+    message = (payload.get("metaData") or {}).get("Message") or payload
+    from_number = message.get("senderPhoneNumber") or message.get("from") or message.get("fromNumber")
+    body = message.get("messageBody") or message.get("text") or message.get("body") or ""
     if not from_number or not str(body).strip():
         logger.warning(f"Signal House webhook: unrecognized payload keys {list(payload)[:10]}")
         return {"status": "ignored"}
 
-    await _process_inbound(db, str(from_number), str(body), media=[])
+    # Normalize to +E164 so consent records match across providers
+    # (Signal House uses digits-only like '16155551234'; Twilio used '+1615...')
+    from_number = str(from_number).strip()
+    if not from_number.startswith("+"):
+        digits = "".join(ch for ch in from_number if ch.isdigit())
+        from_number = f"+{digits}" if len(digits) > 10 else f"+1{digits}"
+
+    await _process_inbound(db, from_number, str(body), media=[])
     return {"status": "ok"}
