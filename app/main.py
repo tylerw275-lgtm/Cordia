@@ -2,9 +2,11 @@ import logging
 from contextlib import asynccontextmanager
 
 import structlog
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
+from sqlalchemy import text as sa_text
 
 from app.api import compliance, conversations, duffel_webhooks, email, family, real_estate, sms, trips
+from app.api.deps import require_admin
 from app.config import settings
 from app.middleware.logging import CorrelationIdMiddleware
 from app.scheduler.scheduler import setup_scheduler, shutdown_scheduler
@@ -18,9 +20,30 @@ structlog.configure(
 logger = structlog.get_logger()
 
 
+async def _bootstrap_family_data() -> None:
+    """Load the family roster on boot. Never raises — a seeding problem must
+    not take the assistant down, but it must be loud in the logs."""
+    from app.database import get_db_session
+    from app.services.family_seed import seed_family
+
+    try:
+        async with get_db_session() as db:
+            # Advisory lock so two replicas booting together don't race.
+            await db.execute(sa_text("SELECT pg_advisory_lock(4820193)"))
+            try:
+                summary = await seed_family(db)
+            finally:
+                await db.execute(sa_text("SELECT pg_advisory_unlock(4820193)"))
+        logger.info("family_bootstrap", **{k: v for k, v in summary.items() if isinstance(v, int)})
+    except Exception as e:
+        logger.error("family_bootstrap_failed", error=str(e), error_type=type(e).__name__)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Cordia starting up", model=settings.claude_model)
+    if settings.seed_family_on_startup:
+        await _bootstrap_family_data()
     setup_scheduler()
     yield
     shutdown_scheduler()
@@ -32,6 +55,11 @@ app = FastAPI(
     description="Personal AI assistant for Cordia Harrington",
     version="1.0.0",
     lifespan=lifespan,
+    # The interactive schema enumerates every route, including the admin ones.
+    # There is no third-party consumer of this API — keep it off the internet.
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
 )
 
 app.add_middleware(CorrelationIdMiddleware)
@@ -39,10 +67,13 @@ app.add_middleware(CorrelationIdMiddleware)
 app.include_router(sms.router)
 app.include_router(email.router)
 app.include_router(compliance.router)
-app.include_router(conversations.router)
-app.include_router(family.router)
-app.include_router(trips.router)
-app.include_router(real_estate.router)
+_admin = [Depends(require_admin)]
+# These expose family PII, the full text of Cordia's conversations, and accept
+# writes (create/patch/delete). Everything below is admin-only.
+app.include_router(conversations.router, dependencies=_admin)
+app.include_router(family.router, dependencies=_admin)
+app.include_router(trips.router, dependencies=_admin)
+app.include_router(real_estate.router, dependencies=_admin)
 app.include_router(duffel_webhooks.router)
 
 
@@ -93,7 +124,7 @@ async def health_test_send(secret: str = "", to: str = "") -> dict:
         return {"error": f"{type(e).__name__}: {e}", "url": url}
 
 
-@app.get("/health/config", include_in_schema=False)
+@app.get("/health/config", include_in_schema=False, dependencies=[Depends(require_admin)])
 async def health_config() -> dict:
     """Deployment diagnostics: which settings are configured, never their
     values. Booleans and last-4 digits only — nothing usable by a third party."""
@@ -119,3 +150,23 @@ async def health_config() -> dict:
         "public_base_url": settings.public_base_url,
         "debug": settings.debug,
     }
+
+
+@app.get("/health/data", include_in_schema=False, dependencies=[Depends(require_admin)])
+async def health_data() -> dict:
+    """Row counts for the tables Cord reads from. An empty family_members table
+    is what made the assistant claim it had no family profiles — one request
+    now tells you whether the data layer is actually populated."""
+    from app.database import get_db_session
+
+    tables = ["family_members", "grandkid_activities", "family_events", "memories",
+              "conversations", "messages", "contacts"]
+    counts: dict = {}
+    async with get_db_session() as db:
+        for table in tables:
+            try:
+                result = await db.execute(sa_text(f"SELECT count(*) FROM {table}"))
+                counts[table] = result.scalar_one()
+            except Exception as e:
+                counts[table] = f"error: {type(e).__name__}"
+    return counts

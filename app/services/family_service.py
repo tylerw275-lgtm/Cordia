@@ -14,18 +14,47 @@ async def get_family_member(db: AsyncSession, member_id: uuid.UUID) -> FamilyMem
     return result.scalar_one_or_none()
 
 
+def _like_escape(value: str) -> str:
+    """Escape LIKE wildcards so user/model input matches literally."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 async def get_family_member_by_name(db: AsyncSession, name: str) -> FamilyMember | None:
-    from sqlalchemy import func
-    name_lower = name.lower()
+    """Look a member up by name, nickname, or a former name (alias).
+
+    Callers pass model- and API-supplied text here, so every comparison is
+    parameterized and LIKE-escaped. Results are ordered so an exact match always
+    beats a substring match — otherwise "Bea" could resolve to whichever row the
+    planner happened to return first.
+    """
+    from sqlalchemy import case, func
+
+    name_lower = name.strip().lower()
+    if not name_lower:
+        return None
+    pattern = f"%{_like_escape(name_lower)}%"
+
+    alias_match = sa.text(
+        "EXISTS (SELECT 1 FROM unnest(aliases) a WHERE lower(a) LIKE :alias_pat ESCAPE '\\')"
+    ).bindparams(alias_pat=pattern)
+
+    exactness = case(
+        (func.lower(FamilyMember.name) == name_lower, 0),
+        (func.lower(FamilyMember.nickname) == name_lower, 1),
+        (func.lower(FamilyMember.name).like(f"{_like_escape(name_lower)}%", escape="\\"), 2),
+        else_=3,
+    )
+
     result = await db.execute(
-        select(FamilyMember).where(
+        select(FamilyMember)
+        .where(
             or_(
-                func.lower(FamilyMember.name).contains(name_lower),
-                func.lower(FamilyMember.nickname).contains(name_lower),
-                # Search aliases array: any element matches
-                sa.text(f"EXISTS (SELECT 1 FROM unnest(aliases) a WHERE lower(a) LIKE '%{name_lower}%')")
+                func.lower(FamilyMember.name).like(pattern, escape="\\"),
+                func.lower(FamilyMember.nickname).like(pattern, escape="\\"),
+                alias_match,
             )
         )
+        .order_by(exactness, FamilyMember.name)
     )
     return result.scalars().first()
 
@@ -210,3 +239,62 @@ async def get_grandkid_activity_balance(db: AsyncSession) -> dict:
         "lean_toward_boys": imbalance,
         "boy_suggestions": boy_suggestions if imbalance else [],
     }
+
+
+# ---------------------------------------------------------------------------
+# Family roster for the system prompt
+# ---------------------------------------------------------------------------
+
+_NO_FAMILY_LOADED = (
+    "FAMILY PROFILES: none are loaded in the database. Do not invent or guess "
+    "family details, and do not ask Cordia to re-enter them — tell her the "
+    "profiles are missing on your side and that it's a system problem being "
+    "looked at."
+)
+
+
+def _age_on(birthday: date, today: date) -> int:
+    return today.year - birthday.year - ((today.month, today.day) < (birthday.month, birthday.day))
+
+
+def format_family_roster(members: Sequence[FamilyMember], today: date | None = None) -> str:
+    """Render the family as a compact prompt block.
+
+    Deliberately omits aliases and every contact detail (phone, email, address,
+    loyalty programs): the system prompt forbids Cord from revealing either, and
+    it can call get_family_member when it genuinely needs one. Output is
+    byte-stable for a given dataset so the prompt cache keeps hitting — don't
+    introduce set() or dict ordering here.
+    """
+    if not members:
+        return _NO_FAMILY_LOADED
+
+    today = today or date.today()
+    names_by_id = {m.id: (m.nickname or m.name) for m in members}
+
+    lines = []
+    for m in members:
+        parts = [m.name if not m.nickname else f"{m.name} ({m.nickname})", f"— {m.relationship}"]
+        parent_name = names_by_id.get(m.parent_id) if m.parent_id else None
+        if parent_name:
+            parts.append(f"child of {parent_name}")
+        if m.city:
+            parts.append(f"{m.city}, {m.state}" if m.state else m.city)
+        if m.birthday:
+            parts.append(f"b. {m.birthday.isoformat()} (age {_age_on(m.birthday, today)})")
+        if m.interests:
+            parts.append("likes " + ", ".join(m.interests))
+        if m.personality_notes:
+            note = " ".join(m.personality_notes.split())
+            parts.append(note if len(note) <= 200 else note[:197] + "...")
+        lines.append("- " + "; ".join(parts))
+
+    return (
+        "FAMILY ROSTER (loaded from her profiles — you already know these people, "
+        "never ask her to introduce them):\n" + "\n".join(lines)
+    )
+
+
+async def get_family_roster_text(db: AsyncSession) -> str:
+    """The roster block injected into Cordia's system prompt every turn."""
+    return format_family_roster(await list_family_members(db))

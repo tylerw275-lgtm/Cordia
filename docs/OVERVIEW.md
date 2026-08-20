@@ -120,17 +120,23 @@ number verified as a faster fallback) is the #1 thing standing between us and go
 
 **Stack**
 - Python + **FastAPI**; **PostgreSQL** via async SQLAlchemy; **Alembic** migrations
-  (through `005_flight_bookings`); **APScheduler** for recurring jobs.
+  (through `007_contact_invites`); **APScheduler** for recurring jobs.
 - **SMS/MMS:** Twilio. Inbound webhook `POST /webhook/sms`, Twilio signature verified.
   Sender allow-list = Cordia + a test number; family numbers resolved via the DB.
 - **Email:** two-way. Gmail (IMAP poll every ~120s + SMTP send) or Resend (inbound
   webhook + API send). See `app/services/email_inbound.py`, `app/scheduler/jobs/email_poll.py`.
 - **AI:** Anthropic Claude (`claude-sonnet-4-6`). Per-conversation history, proactive
   memory injection, agentic tool loop (≤10 steps), prompt caching, image/vision support.
+  The family roster is injected into every owner prompt, so Cord never has to call a
+  tool to know who the family is.
   Model-adaptive prompting profiles (`app/prompts/prompt_profiles.py`) pick thinking/effort
   params and token budgets per model; deep-work asks get an 8K budget vs 2K conversational.
   Separate, **restricted** system prompt + toolset for family-circle members
   (`sender_role="family"`).
+- **Access control:** the data APIs (`/api/v1/*`, `/health/config`, `/health/data`) are
+  gated on `ADMIN_API_SECRET` (`X-Admin-Secret` header or `?secret=`) and fail closed
+  when it's unset. Webhooks keep their own verification; `/health` and the compliance
+  pages stay public. The OpenAPI schema and `/docs` are disabled.
 - **Flights:** Duffel API (`search_flights`, `get_offer`, `create_link_session`,
   `get_order`); booking webhook `POST /webhook/duffel` (HMAC-verified) + `/booking/*`
   landing pages.
@@ -158,6 +164,8 @@ OutboundMessages (draft/approve/send queue) — migration `006`.
 - `app/tools/` (+ `registry.py`) — every capability the AI can call.
 - `app/scheduler/` — the proactive jobs.
 - `app/api/compliance.py` — consent / privacy / terms / opt-in pages.
+- `app/data/family_seed.py` + `app/services/family_seed.py` — the family roster and the
+  idempotent boot-time load.
 - `app/api/duffel_webhooks.py` — booking confirmations.
 
 ---
@@ -168,11 +176,14 @@ OutboundMessages (draft/approve/send queue) — migration `006`.
    fallback). Highest priority — most everything else is ready behind it.
 2. **A live phone number owned by the correct Twilio account/brand** to send/receive on.
 3. **Production secrets set in Railway:** Twilio credentials, Anthropic API key, Duffel
-   token, database URL, and (for email) the Gmail address + app password or Resend key.
+   token, database URL, `ADMIN_API_SECRET` (required — the data APIs deny every
+   request without it), and (for email) the Gmail address + app password or Resend key.
 4. **End-to-end tests on the real number/inbox:** inbound text and email → AI reply;
    STOP/START/HELP; photo message; web consent form; a family-member enrollment.
-5. **Load Cordia's family data** (members, birthdays, kids) so the proactive features
-   have real data to act on.
+5. ~~Load Cordia's family data~~ — now automatic. The roster (members, birthdays,
+   kids) loads on every boot from `app/data/family_seed.py`; the load is idempotent,
+   so a redeploy or a database reset self-heals. Check it with
+   `GET /health/data`. Set `SEED_FAMILY_ON_STARTUP=false` to turn it off.
 6. **Optional, when ready:** turn on `enable_flight_booking` and complete a Duffel
    test-mode booking before exposing it to Cordia.
 

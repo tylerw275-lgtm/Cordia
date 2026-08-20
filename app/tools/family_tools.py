@@ -5,7 +5,7 @@ from app.services import family_service
 TOOL_SCHEMAS = [
     {
         "name": "get_family_member",
-        "description": "Retrieve a family member's profile including interests, personality, location, birthday, and aliases. Always call this before planning a grandchild trip. Also works if Cordia uses an old name (e.g. 'Brad' for Aaron, 'Hunter' for Ryan).",
+        "description": "Retrieve a family member's profile including interests, personality, location and birthday. Always call this before planning a grandchild trip. The lookup also succeeds if Cordia uses an old name for someone.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -98,7 +98,6 @@ async def get_family_member_handler(db: AsyncSession, name: str, **kwargs) -> di
         "id": str(member.id),
         "name": member.name,
         "nickname": member.nickname,
-        "aliases": member.aliases or [],
         "relationship": member.relationship,
         "gender": member.gender,
         "city": member.city,
@@ -122,7 +121,6 @@ async def list_family_members_handler(db: AsyncSession, **kwargs) -> dict:
             {
                 "name": m.name,
                 "nickname": m.nickname,
-                "aliases": m.aliases or [],
                 "relationship": m.relationship,
                 "gender": m.gender,
                 "city": m.city,

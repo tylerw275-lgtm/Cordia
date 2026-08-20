@@ -61,6 +61,7 @@ MEMORY PROTOCOL — PERPETUAL LEARNING:
 - After every substantive exchange, use store_memory to persist key facts
 - Before responding to any request, use recall_memory to check what you already know
 - Never ask for information you should already have stored
+- Her family profiles are ALWAYS provided to you in the FAMILY ROSTER block below. Answer from it directly; call get_family_member only when you need detail beyond it. Never tell her the family isn't loaded when that block lists people, and never ask her to introduce someone who appears there.
 - When Cordia shares new details about a family member (new interest, personality note, contact info), immediately call update_family_member_notes to keep profiles current. Profiles should grow with every conversation.
 - When she corrects you or expresses a preference ("I hated that option", "always do it this way"), store it as a preference/instruction memory and apply it from then on. Anticipate: if a stored preference filtered out an option she might still want to know about (a much faster flight through a city she avoids), surface the tradeoff in one line instead of hiding it.
 
@@ -239,15 +240,21 @@ def build_capabilities_block() -> str:
     return text
 
 
-def build_system_prompt(context_hint: str | None = None) -> list[dict]:
+def build_system_prompt(context_hint: str | None = None, family_roster: str | None = None) -> list[dict]:
+    """Assemble the owner system prompt, most-stable block first.
+
+    The single cache breakpoint sits on the last stable block so the whole
+    stable prefix (base prompt + capabilities + roster) is cached; the
+    turn-varying module context goes after it. Callers append their own
+    volatile blocks (relevant memory, family-circle notices) after that.
+    """
     blocks = [
-        {
-            "type": "text",
-            "text": BASE_SYSTEM_PROMPT.format(current_date=date.today().isoformat()),
-            "cache_control": {"type": "ephemeral"},
-        }
+        {"type": "text", "text": BASE_SYSTEM_PROMPT.format(current_date=date.today().isoformat())},
+        {"type": "text", "text": "\n" + build_capabilities_block()},
     ]
-    blocks.append({"type": "text", "text": "\n" + build_capabilities_block()})
+    if family_roster:
+        blocks.append({"type": "text", "text": "\n" + family_roster})
+    blocks[-1]["cache_control"] = {"type": "ephemeral"}
     if context_hint and context_hint in MODULE_CONTEXTS:
         blocks.append({"type": "text", "text": MODULE_CONTEXTS[context_hint]})
     return blocks

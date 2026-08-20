@@ -54,6 +54,15 @@ class Settings(BaseSettings):
     email_inbound_secret: str = ""  # optional shared secret for the inbound webhook
     owner_email: str = ""  # Cordia's destination inbox
 
+    # Load Cordia's family roster on boot (idempotent). Keeps a fresh or reset
+    # database self-healing instead of depending on someone running a script.
+    seed_family_on_startup: bool = True
+
+    # Gates the admin/data APIs (/api/v1/*, /health/config, /health/data).
+    # Deliberately separate from signalhouse_webhook_secret, which is shared
+    # with the SMS vendor. Unset means those routes are denied, not open.
+    admin_api_secret: str = ""
+
     enable_flight_search: bool = True
     enable_lease_review: bool = True
     enable_family_coordination: bool = True
