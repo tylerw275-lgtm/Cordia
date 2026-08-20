@@ -94,9 +94,11 @@ async def health_test_send(secret: str = "", to: str = "") -> dict:
 
 
 @app.get("/health/config", include_in_schema=False)
-async def health_config() -> dict:
+async def health_config(secret: str = "") -> dict:
     """Deployment diagnostics: which settings are configured, never their
-    values. Booleans and last-4 digits only — nothing usable by a third party."""
+    values. Secret-gated so deployment details aren't publicly readable."""
+    if not settings.signalhouse_webhook_secret or secret != settings.signalhouse_webhook_secret:
+        return {"error": "bad secret"}
 
     def last4(v: str) -> str:
         digits = "".join(c for c in (v or "") if c.isdigit())
