@@ -1,7 +1,8 @@
 import logging
+from collections import OrderedDict
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Form, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, Request, Response
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -95,6 +96,37 @@ async def _record_opt_in(db: AsyncSession, phone: str) -> None:
     await db.commit()
 
 
+# Providers retry a webhook whose response is slow, and an AI round-trip can
+# take many seconds. We acknowledge immediately, process in the background,
+# and drop repeat deliveries of the same provider message id — otherwise one
+# inbound text produces several duplicate replies.
+_RECENT_MESSAGE_IDS: "OrderedDict[str, None]" = OrderedDict()
+_RECENT_IDS_MAX = 500
+
+
+def _is_duplicate(message_id: str | None) -> bool:
+    """True if this provider message id was already accepted (retry delivery)."""
+    if not message_id:
+        return False
+    if message_id in _RECENT_MESSAGE_IDS:
+        return True
+    _RECENT_MESSAGE_IDS[message_id] = None
+    while len(_RECENT_MESSAGE_IDS) > _RECENT_IDS_MAX:
+        _RECENT_MESSAGE_IDS.popitem(last=False)
+    return False
+
+
+async def _process_inbound_bg(from_number: str, body: str, media: list) -> None:
+    """Background entry point — opens its own DB session (the request-scoped
+    one is closed once the webhook responds) and never raises into the app."""
+    from app.database import get_db_session
+    try:
+        async with get_db_session() as db:
+            await _process_inbound(db, from_number, body, media)
+    except Exception as e:
+        logger.error(f"Background inbound processing failed: {e}", exc_info=True)
+
+
 async def _process_inbound(db: AsyncSession, from_number: str, body: str, media: list) -> None:
     """Provider-agnostic inbound SMS handling: keywords, sender resolution,
     consent recording, family welcome, and the AI conversation. Both the
@@ -163,10 +195,10 @@ async def _process_inbound(db: AsyncSession, from_number: str, body: str, media:
 @router.post("/webhook/sms")
 async def receive_sms(
     request: Request,
+    background: BackgroundTasks,
     From: str = Form(...),
     Body: str = Form(...),
     MessageSid: str = Form(...),
-    db: AsyncSession = Depends(get_db),
 ) -> Response:
     form_data = dict(await request.form())
     if not settings.debug:
@@ -183,12 +215,16 @@ async def receive_sms(
         if form_data.get(f"MediaUrl{i}")
     ]
 
-    await _process_inbound(db, From, Body, media)
+    if _is_duplicate(MessageSid):
+        logger.info(f"Twilio webhook: duplicate delivery {MessageSid} ignored")
+        return Response(content=TWIML_EMPTY, media_type="application/xml")
+
+    background.add_task(_process_inbound_bg, From, Body, media)
     return Response(content=TWIML_EMPTY, media_type="application/xml")
 
 
 @router.post("/webhook/signalhouse")
-async def receive_signalhouse_sms(request: Request, db: AsyncSession = Depends(get_db)) -> dict:
+async def receive_signalhouse_sms(request: Request, background: BackgroundTasks) -> dict:
     """Inbound SMS from Signal House. Register in their dashboard (webhook
     authType NONE) as:
     https://cordia.aigenpartners.com/webhook/signalhouse?secret=<SIGNALHOUSE_WEBHOOK_SECRET>
@@ -228,5 +264,11 @@ async def receive_signalhouse_sms(request: Request, db: AsyncSession = Depends(g
         digits = "".join(ch for ch in from_number if ch.isdigit())
         from_number = f"+{digits}" if len(digits) > 10 else f"+1{digits}"
 
-    await _process_inbound(db, from_number, str(body), media=[])
+    # Signal House retries on a slow response; ignore repeat deliveries
+    msg_id = str(payload.get("identifier") or message.get("_id") or "")
+    if _is_duplicate(msg_id):
+        logger.info(f"Signal House webhook: duplicate delivery {msg_id} ignored")
+        return {"status": "duplicate_ignored"}
+
+    background.add_task(_process_inbound_bg, from_number, str(body), [])
     return {"status": "ok"}
