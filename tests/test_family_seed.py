@@ -102,3 +102,49 @@ async def test_daughter_in_law_is_not_rendered_as_a_child(db):
     assert "Amber Wilkinson — daughter-in-law; child of" not in roster
     # Real children still render their parent.
     assert "child of Aaron Wilkinson" in roster
+
+
+@pytest.mark.asyncio
+async def test_add_family_member_tool_creates_and_links(db):
+    """There was no way to add a new family member from conversation, while the
+    roster block asserts Cord already knows everyone."""
+    from app.tools import family_tools
+
+    await seed_family(db)
+    aaron = await _find_exact(db, "Aaron Wilkinson")
+
+    result = await family_tools.add_family_member_handler(
+        db, name="Nora Wilkinson", relationship="granddaughter",
+        birthday="2026-02-14", parent_name="Aaron Wilkinson", interests=["music"],
+    )
+    assert result["added"] is True
+
+    nora = await _find_exact(db, "Nora Wilkinson")
+    assert nora.parent_id == aaron.id
+    assert nora.birthday.isoformat() == "2026-02-14"
+
+    roster = await family_service.get_family_roster_text(db)
+    assert "Nora Wilkinson — granddaughter; child of Aaron Wilkinson" in roster
+
+
+@pytest.mark.asyncio
+async def test_add_family_member_refuses_a_duplicate(db):
+    from app.tools import family_tools
+
+    await seed_family(db)
+    result = await family_tools.add_family_member_handler(
+        db, name="Aaron Wilkinson", relationship="son",
+    )
+    assert result["added"] is False
+    assert "already in the family profiles" in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_add_family_member_rejects_a_bad_birthday(db):
+    from app.tools import family_tools
+
+    result = await family_tools.add_family_member_handler(
+        db, name="Test Person", relationship="friend", birthday="Feb 3rd",
+    )
+    assert result["added"] is False
+    assert await _find_exact(db, "Test Person") is None

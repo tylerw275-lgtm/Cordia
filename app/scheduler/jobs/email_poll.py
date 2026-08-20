@@ -42,27 +42,46 @@ def _plain_body(msg) -> str:
     return payload.decode(msg.get_content_charset() or "utf-8", errors="replace") if payload else ""
 
 
-def _fetch_unseen_sync(address: str | None = None, password: str | None = None) -> list[tuple[str, str, str]]:
-    """Fetch unseen messages from a Gmail inbox over IMAP. Defaults to the
-    assistant's main mailbox; the Naples house poller passes its own creds."""
-    messages: list[tuple[str, str, str]] = []
+def _fetch_unseen_sync(address: str | None = None, password: str | None = None) -> list[tuple[str, str, str, str]]:
+    """Fetch unseen messages from a Gmail inbox over IMAP.
+
+    Returns (uid, sender, subject, body). Deliberately does NOT mark anything
+    read — marking happened here, before processing, so any downstream failure
+    destroyed the email permanently. Callers mark via mark_seen_sync once the
+    message is safely handled. UIDs (not sequence numbers) because those stay
+    stable across the two sessions.
+    """
+    messages: list[tuple[str, str, str, str]] = []
     with imaplib.IMAP4_SSL("imap.gmail.com") as box:
         box.login(address or settings.email_address, password or settings.email_app_password)
         box.select("INBOX")
-        typ, data = box.search(None, "UNSEEN")
+        typ, data = box.uid("search", None, "UNSEEN")
         if typ != "OK" or not data or not data[0]:
             return messages
-        for num in data[0].split():
-            typ, msgdata = box.fetch(num, "(RFC822)")
+        for uid in data[0].split():
+            typ, msgdata = box.uid("fetch", uid, "(BODY.PEEK[])")
             if typ != "OK" or not msgdata or not msgdata[0]:
                 continue
             msg = emaillib.message_from_bytes(msgdata[0][1])
             sender = email_inbound.extract_email(msg.get("From"))
             subject = _decode(msg.get("Subject"))
             body = _plain_body(msg)
-            messages.append((sender, subject, body))
-            box.store(num, "+FLAGS", "\\Seen")
+            messages.append((uid.decode() if isinstance(uid, bytes) else str(uid), sender, subject, body))
     return messages
+
+
+def mark_seen_sync(uids: list[str], address: str | None = None, password: str | None = None) -> None:
+    """Mark messages read, after they have been successfully processed."""
+    if not uids:
+        return
+    with imaplib.IMAP4_SSL("imap.gmail.com") as box:
+        box.login(address or settings.email_address, password or settings.email_app_password)
+        box.select("INBOX")
+        for uid in uids:
+            try:
+                box.uid("store", uid, "+FLAGS", "\\Seen")
+            except Exception as e:
+                logger.warning(f"Could not mark message {uid} read: {e}")
 
 
 async def poll_inbound_email() -> None:
@@ -75,9 +94,17 @@ async def poll_inbound_email() -> None:
         return
     if not messages:
         return
+    handled: list[str] = []
     async with get_db_session() as db:
-        for sender, subject, body in messages:
+        for uid, sender, subject, body in messages:
             try:
                 await email_inbound.process_inbound_email(db, sender, subject, body)
+                handled.append(uid)
             except Exception as e:
-                logger.error(f"Error processing polled email from {sender}: {e}")
+                # Left unread on purpose so the next poll retries it.
+                logger.error(f"Error processing polled email from {email_inbound._mask(sender)}: {e}")
+    if handled:
+        try:
+            await asyncio.to_thread(mark_seen_sync, handled)
+        except Exception as e:
+            logger.error(f"Could not mark processed email read: {e}")

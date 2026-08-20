@@ -58,9 +58,49 @@ def test_exactly_one_cache_breakpoint_on_the_last_stable_block():
     blocks = build_system_prompt("trip_planning", family_roster="FAMILY ROSTER: ...")
     marked = [i for i, b in enumerate(blocks) if "cache_control" in b]
     assert len(marked) == 1
-    # The roster is the last stable block; the module context comes after it.
+    # The roster is the last block that's stable across channel and context;
+    # everything after it varies per turn and must stay outside the cached prefix.
     assert blocks[marked[0]]["text"].strip().startswith("FAMILY ROSTER")
-    assert marked[0] == len(blocks) - 2
+    assert marked[0] == len(blocks) - 3  # + channel format + module context
+
+
+def test_email_channel_gets_email_formatting_rules():
+    """Email replies were written under the SMS rules — 3-4 sentences, no
+    markdown — and then sent as email."""
+    sms = " ".join(b["text"] for b in build_system_prompt(None, family_roster="R", channel="sms"))
+    email = " ".join(b["text"] for b in build_system_prompt(None, family_roster="R", channel="email"))
+
+    assert "RESPONSE FORMAT FOR SMS" in sms
+    assert "Maximum 3-4 sentences" in sms
+    assert "RESPONSE FORMAT FOR EMAIL" in email
+    assert "Maximum 3-4 sentences" not in email
+    assert "Length limits do not apply" in email
+
+
+def test_prompt_never_names_a_tool_that_is_not_registered(mocker):
+    """The prompt used to instruct Cord to use nine outbound/contact tools that
+    aren't registered when enable_outbound is off — in the same message that
+    forbids offering anything outside CURRENT CAPABILITIES."""
+    from app.tools.registry import get_tool_schemas
+
+    mocker.patch("app.config.settings.enable_outbound", False)
+    registered = {t["name"] for t in get_tool_schemas("owner")}
+    prompt = " ".join(b["text"] for b in build_system_prompt(None, family_roster="R"))
+
+    candidates = [
+        "add_contact", "update_contact", "find_contact", "list_contacts",
+        "create_outbound_drafts", "send_outbound", "edit_outbound_draft",
+        "invite_to_sms", "list_sms_roster",
+    ]
+    named_but_missing = [t for t in candidates if t in prompt and t not in registered]
+    assert named_but_missing == []
+
+
+def test_outbound_workflow_returns_when_the_flag_is_on(mocker):
+    mocker.patch("app.config.settings.enable_outbound", True)
+    prompt = " ".join(b["text"] for b in build_system_prompt(None, family_roster="R"))
+    assert "create_outbound_drafts" in prompt
+    assert "invite_to_sms" in prompt
 
 
 def test_cache_breakpoint_still_set_without_a_roster():

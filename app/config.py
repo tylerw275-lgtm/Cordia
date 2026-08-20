@@ -76,6 +76,10 @@ class Settings(BaseSettings):
     naples_email_app_password: str = ""
     naples_poll_interval_seconds: int = 300
 
+    # APScheduler's timezone. Without this it uses the container's local zone
+    # (UTC), so the "local hour" settings below fired in the middle of the night.
+    scheduler_timezone: str = "America/Chicago"
+
     flight_monitor_interval_minutes: int = 60
     morning_brief_hour: int = 7  # local server hour for the daily brief
     birthday_prep_lead_days: int = 14  # how far ahead to proactively prep for birthdays

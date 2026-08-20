@@ -5,7 +5,7 @@ from sqlalchemy import select
 
 from app.database import get_db_session
 from app.models.trips import FlightWatch, PriceSnapshot
-from app.services import duffel_service, sms_service
+from app.services import claude_service, duffel_service, sms_service
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -30,6 +30,7 @@ async def monitor_flight_prices() -> None:
                     max_results=5,
                 )
                 if not offers:
+                    logger.info(f"No offers for watch {watch.id} ({watch.origin}->{watch.destination})")
                     continue
 
                 lowest = min(offers, key=lambda x: x["price"])
@@ -67,8 +68,12 @@ async def monitor_flight_prices() -> None:
                         f"({lowest['carrier']}, {watch.cabin_class}) for {watch.depart_date}. "
                         f"Reply 'details' for full options."
                     )
-                    await sms_service.send_sms(to=settings.cordia_phone_number, body=msg)
-                    snapshot.alerted = True
+                    if await sms_service.send_sms(to=settings.cordia_phone_number, body=msg):
+                        snapshot.alerted = True
+                        # So "book it" / "details" replies land with context.
+                        await claude_service.record_assistant_message(
+                            db, settings.cordia_phone_number, msg
+                        )
 
                 watch.last_checked_at = datetime.utcnow()
                 await db.commit()

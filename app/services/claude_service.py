@@ -235,7 +235,7 @@ async def _persist_message(
     await db.commit()
 
 
-async def _build_owner_system(db: AsyncSession, user_message: str, context_hint: str | None) -> list[dict]:
+async def _build_owner_system(db: AsyncSession, user_message: str, context_hint: str | None, channel: str = "sms") -> list[dict]:
     if context_hint is None:
         context_hint = detect_context(user_message)
 
@@ -245,7 +245,7 @@ async def _build_owner_system(db: AsyncSession, user_message: str, context_hint:
         db, query=user_message, limit=5, exclude_categories=["feature_request"]
     )
     roster = await family_service.get_family_roster_text(db)
-    system = build_system_prompt(context_hint, family_roster=roster)
+    system = build_system_prompt(context_hint, family_roster=roster, channel=channel)
     if memories:
         lines = [f"- {m.subject}: {m.content}" for m in memories]
         system.append({"type": "text", "text": "\nRELEVANT MEMORY:\n" + "\n".join(lines)})
@@ -284,6 +284,7 @@ async def chat(
     sender_role: str = "owner",
     sender_member: Any = None,
     images: list[dict] | None = None,
+    channel: str = "sms",
 ) -> str:
     if context_hint is None and sender_role != "family":
         context_hint = detect_context(user_message)
@@ -291,7 +292,7 @@ async def chat(
     if sender_role == "family" and sender_member is not None:
         system = await _build_family_system(db, sender_member)
     else:
-        system = await _build_owner_system(db, user_message, context_hint)
+        system = await _build_owner_system(db, user_message, context_hint, channel=channel)
 
     # Model-adaptive request shaping: bigger budget + thinking/effort for deep work
     profile = get_profile(settings.claude_model)

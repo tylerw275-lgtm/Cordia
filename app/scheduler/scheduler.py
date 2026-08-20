@@ -1,5 +1,8 @@
 import logging
 
+from zoneinfo import ZoneInfo
+
+from apscheduler.events import EVENT_JOB_ERROR
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.config import settings
@@ -12,7 +15,19 @@ from app.scheduler.jobs.reminders import send_birthday_reminders, send_lease_rem
 
 logger = logging.getLogger(__name__)
 
-_scheduler = AsyncIOScheduler()
+# Explicit timezone: APScheduler otherwise uses the host's local zone via
+# tzlocal, which in a container is UTC — so morning_brief_hour=7, documented as
+# a local hour, fired at ~2am Central.
+_scheduler = AsyncIOScheduler(timezone=ZoneInfo(settings.scheduler_timezone))
+
+
+def _on_job_error(event) -> None:
+    """Surface job crashes in the app's own logs.
+
+    Without this, an exception in a job is logged only by APScheduler's own
+    logger and the job just silently doesn't run that day.
+    """
+    logger.error(f"Scheduled job {event.job_id} failed: {event.exception}", exc_info=event.exception)
 
 
 def setup_scheduler() -> None:
@@ -87,6 +102,7 @@ def setup_scheduler() -> None:
         )
         logger.info(f"Naples inbox polling every {settings.naples_poll_interval_seconds}s")
 
+    _scheduler.add_listener(_on_job_error, EVENT_JOB_ERROR)
     _scheduler.start()
     logger.info("Scheduler started")
 

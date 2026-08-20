@@ -157,7 +157,8 @@ async def _process_inbound(db: AsyncSession, from_number: str, body: str, media:
     # Handle STOP — providers also handle this natively, but we record it
     if keyword in ("STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT", "OPTOUT", "REVOKE"):
         await _record_opt_out(db, from_number)
-        await sms_service.send_sms(to=from_number, body=_STOP_CONFIRM)
+        # force: the opt-out confirmation itself must reach a now-opted-out number
+        await sms_service.send_sms(to=from_number, body=_STOP_CONFIRM, force=True)
         return
 
     # Handle START / UNSTOP — re-subscription
@@ -168,7 +169,8 @@ async def _process_inbound(db: AsyncSession, from_number: str, body: str, media:
 
     # Handle HELP / INFO
     if keyword in ("HELP", "INFO"):
-        await sms_service.send_sms(to=from_number, body=_HELP_MSG)
+        # force: HELP is carrier-mandated and must always be answered
+        await sms_service.send_sms(to=from_number, body=_HELP_MSG, force=True)
         return
 
     # Resolve who this is: Cordia (owner), an opted-in family member, or unknown

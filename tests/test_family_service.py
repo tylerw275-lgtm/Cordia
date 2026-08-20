@@ -80,3 +80,39 @@ async def test_lookup_prefers_exact_match(db):
     await family_service.create_family_member(db, name="Anna", relationship="daughter-in-law")
     found = await family_service.get_family_member_by_name(db, "Anna")
     assert found.name == "Anna"
+
+
+# ---------------------------------------------------------------------------
+# Annual events used to vanish the day after they passed, while the tool told
+# Cordia they recur.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_annual_event_survives_its_date(db):
+    last_week = date.today() - timedelta(days=7)
+    await family_service.create_family_event(
+        db, title="Family Reunion", event_type="gathering",
+        event_date=last_week, recurrence="annual",
+    )
+    events = await family_service.list_upcoming_events(db, days_ahead=400)
+    assert [e.title for e in events] == ["Family Reunion"]
+
+
+@pytest.mark.asyncio
+async def test_one_time_event_does_not_come_back(db):
+    await family_service.create_family_event(
+        db, title="Dentist", event_type="appointment",
+        event_date=date.today() - timedelta(days=7), recurrence="one_time",
+    )
+    events = await family_service.list_upcoming_events(db, days_ahead=400)
+    assert events == []
+
+
+@pytest.mark.asyncio
+async def test_upcoming_one_time_event_still_listed(db):
+    await family_service.create_family_event(
+        db, title="School play", event_type="school_event",
+        event_date=date.today() + timedelta(days=10), recurrence="one_time",
+    )
+    events = await family_service.list_upcoming_events(db, days_ahead=30)
+    assert [e.title for e in events] == ["School play"]

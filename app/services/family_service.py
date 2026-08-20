@@ -3,7 +3,7 @@ from datetime import date
 from typing import Sequence
 
 import sqlalchemy as sa
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.family import FamilyEvent, FamilyMember, GrandkidActivity
@@ -129,17 +129,40 @@ async def update_family_member_notes(db: AsyncSession, name: str, field: str, va
     return True
 
 
+def next_occurrence(event: FamilyEvent, today: date | None = None) -> date | None:
+    """When this event next happens.
+
+    An 'annual' event used to disappear the day after it passed, because every
+    reader filtered on the absolute event_date — while the tool told Cordia it
+    recurs. Roll those forward instead; one-time events keep their real date.
+    """
+    today = today or date.today()
+    if event.event_date is None:
+        return None
+    if (event.recurrence or "one_time") != "annual":
+        return event.event_date
+    return next_birthday(event.event_date, today)
+
+
 async def list_upcoming_events(db: AsyncSession, days_ahead: int = 90) -> Sequence[FamilyEvent]:
     from datetime import timedelta
     today = date.today()
     cutoff = today + timedelta(days=days_ahead)
     result = await db.execute(
-        select(FamilyEvent)
-        .where(FamilyEvent.event_date >= today)
-        .where(FamilyEvent.event_date <= cutoff)
-        .order_by(FamilyEvent.event_date)
+        select(FamilyEvent).where(
+            or_(
+                # one-time events in the window...
+                and_(FamilyEvent.event_date >= today, FamilyEvent.event_date <= cutoff),
+                # ...plus any annual event, which is filtered by next_occurrence
+                FamilyEvent.recurrence == "annual",
+            )
+        )
     )
-    return result.scalars().all()
+    events = [
+        e for e in result.scalars().all()
+        if (occ := next_occurrence(e, today)) is not None and today <= occ <= cutoff
+    ]
+    return sorted(events, key=lambda e: next_occurrence(e, today))
 
 
 async def create_family_event(db: AsyncSession, **kwargs) -> FamilyEvent:
@@ -150,6 +173,29 @@ async def create_family_event(db: AsyncSession, **kwargs) -> FamilyEvent:
     return event
 
 
+def next_birthday(birthday: date, today: date | None = None) -> date | None:
+    """The next occurrence of this birthday on or after `today`.
+
+    Feb 29 falls back to Feb 28 in common years rather than being dropped —
+    the previous code caught the ValueError and skipped the member entirely,
+    so a leap-day birthday silently never produced a reminder.
+    """
+    if birthday is None:
+        return None
+    today = today or date.today()
+
+    def _on(year: int) -> date:
+        try:
+            return birthday.replace(year=year)
+        except ValueError:
+            return date(year, 2, 28)  # Feb 29 in a common year
+
+    occurrence = _on(today.year)
+    if occurrence < today:
+        occurrence = _on(today.year + 1)
+    return occurrence
+
+
 async def get_upcoming_birthdays(db: AsyncSession, days_ahead: int = 30) -> Sequence[FamilyMember]:
     today = date.today()
     members = await list_family_members(db)
@@ -157,16 +203,8 @@ async def get_upcoming_birthdays(db: AsyncSession, days_ahead: int = 30) -> Sequ
     for m in members:
         if not m.birthday:
             continue
-        try:
-            this_year = m.birthday.replace(year=today.year)
-        except ValueError:
-            continue
-        if this_year < today:
-            try:
-                this_year = this_year.replace(year=today.year + 1)
-            except ValueError:
-                continue
-        if (this_year - today).days <= days_ahead:
+        occurrence = next_birthday(m.birthday, today)
+        if occurrence is not None and (occurrence - today).days <= days_ahead:
             upcoming.append(m)
     return upcoming
 

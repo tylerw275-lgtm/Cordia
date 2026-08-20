@@ -15,7 +15,7 @@ import logging
 
 from app.config import settings
 from app.database import get_db_session
-from app.scheduler.jobs.email_poll import _fetch_unseen_sync
+from app.scheduler.jobs.email_poll import _fetch_unseen_sync, mark_seen_sync
 from app.services import claude_service, email_inbound, sms_service
 
 logger = logging.getLogger(__name__)
@@ -44,10 +44,11 @@ async def poll_naples_inbox() -> None:
         return
     if not messages:
         return
+    handled: list[str] = []
     async with get_db_session() as db:
         conv_key = settings.cordia_phone_number or settings.owner_email or "naples"
         conversation = await claude_service.get_or_create_conversation(db, conv_key)
-        for sender, subject, body in messages:
+        for uid, sender, subject, body in messages:
             try:
                 body = email_inbound.strip_quoted(body or "")
                 wrapped = _NAPLES_ENVELOPE.format(
@@ -58,5 +59,23 @@ async def poll_naples_inbox() -> None:
                     await sms_service.send_sms(
                         to=settings.cordia_phone_number, body=f"🏠 Naples house: {summary}"
                     )
+                elif settings.owner_email:
+                    # Don't pay for a summary and then throw it away.
+                    from app.services import email_service
+                    await email_service.send_email(
+                        to=settings.owner_email,
+                        subject=f"Naples house: {subject or '(no subject)'}",
+                        body_markdown=summary,
+                    )
+                handled.append(uid)
             except Exception as e:
+                # Left unread so the next poll retries it.
                 logger.error(f"Error processing Naples email from {email_inbound._mask(sender)}: {e}")
+    if handled:
+        try:
+            await asyncio.to_thread(
+                mark_seen_sync, handled,
+                settings.naples_email_address, settings.naples_email_app_password,
+            )
+        except Exception as e:
+            logger.error(f"Could not mark Naples email read: {e}")

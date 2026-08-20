@@ -6,6 +6,15 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+
+class DuffelUnavailable(Exception):
+    """The flight search could not run (bad/expired token, network, API error).
+
+    Distinct from an empty result: an empty list means "no flights match", and
+    telling Cordia that when the token is dead sends her chasing a problem that
+    isn't hers.
+    """
+
 DUFFEL_BASE = "https://api.duffel.com"
 DUFFEL_VERSION = "v2"
 
@@ -181,4 +190,4 @@ async def search_flights(
             return [_normalize_offer(o) for o in offers[:max_results]]
     except Exception as e:
         logger.error(f"Duffel search_flights error: {e}")
-        return []
+        raise DuffelUnavailable(str(e)) from e
