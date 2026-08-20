@@ -54,6 +54,20 @@ class Settings(BaseSettings):
     email_inbound_secret: str = ""  # optional shared secret for the inbound webhook
     owner_email: str = ""  # Cordia's destination inbox
 
+    # The family roster itself, as JSON. Deliberately NOT in the repo: it holds
+    # names, children's dates of birth, phone numbers and home addresses.
+    family_seed_json: str = ""
+    family_seed_path: str = ""  # local-dev / CLI alternative; inline wins
+
+    # Load Cordia's family roster on boot (idempotent). Keeps a fresh or reset
+    # database self-healing instead of depending on someone running a script.
+    seed_family_on_startup: bool = True
+
+    # Gates the admin/data APIs (/api/v1/*, /health/config, /health/data).
+    # Deliberately separate from signalhouse_webhook_secret, which is shared
+    # with the SMS vendor. Unset means those routes are denied, not open.
+    admin_api_secret: str = ""
+
     enable_flight_search: bool = True
     enable_lease_review: bool = True
     enable_family_coordination: bool = True
@@ -66,6 +80,10 @@ class Settings(BaseSettings):
     naples_email_address: str = ""
     naples_email_app_password: str = ""
     naples_poll_interval_seconds: int = 300
+
+    # APScheduler's timezone. Without this it uses the container's local zone
+    # (UTC), so the "local hour" settings below fired in the middle of the night.
+    scheduler_timezone: str = "America/Chicago"
 
     flight_monitor_interval_minutes: int = 60
     morning_brief_hour: int = 7  # local server hour for the daily brief

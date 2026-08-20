@@ -9,6 +9,8 @@ The only path by which Cord sends anything to a third party. Invariants:
   to the model.
 """
 import logging
+
+from app.utils.phone import normalize_phone
 import uuid
 from datetime import datetime, timezone
 
@@ -115,8 +117,15 @@ def mask_address(addr: str | None) -> str:
 
 async def _sms_consent_ok(db: AsyncSession, phone: str) -> bool:
     result = await db.execute(
-        text("SELECT 1 FROM sms_consent WHERE phone = :phone AND consented_at IS NOT NULL AND opted_out_at IS NULL"),
-        {"phone": phone},
+        # Match on the last 10 digits: consent rows are always +E164, but family
+        # profiles carry bare digits, so an opted-in son read as "not opted in"
+        # and his drafts were silently rerouted to email.
+        text(
+            "SELECT 1 FROM sms_consent "
+            "WHERE right(regexp_replace(phone, '[^0-9]', '', 'g'), 10) = :digits "
+            "AND consented_at IS NOT NULL AND opted_out_at IS NULL"
+        ),
+        {"digits": normalize_phone(phone)},
     )
     return result.first() is not None
 

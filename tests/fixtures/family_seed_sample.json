@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "members": [
+    {
+      "name": "Dominic Rivers",
+      "relationship": "son",
+      "gender": "male",
+      "aliases": ["Nico"],
+      "birthday": "1983-08-07",
+      "phone": "+15555550101",
+      "address": "100 Example Way, Springfield, IL 62704",
+      "city": "Springfield",
+      "state": "IL",
+      "personality_notes": "Recently built a pool at the house."
+    },
+    {
+      "name": "Theodore Rivers",
+      "relationship": "son",
+      "gender": "male",
+      "birthday": "1985-07-27",
+      "phone": "+15555550102",
+      "city": "Riverton",
+      "state": "VA"
+    },
+    {
+      "name": "Marta",
+      "relationship": "daughter-in-law",
+      "gender": "female",
+      "birthday": "1984-05-07",
+      "phone": "+15555550103",
+      "email": "marta@example.com",
+      "personality_notes": "Dominic's wife. Mother of Pia."
+    },
+    {
+      "name": "Pia Rivers",
+      "relationship": "granddaughter",
+      "gender": "female",
+      "birthday": "2016-09-25",
+      "parent": "Dominic Rivers",
+      "interests": ["animals", "concerts", "swimming"],
+      "personality_notes": "Indecisive when pressed — offer two curated options."
+    },
+    {
+      "name": "Otis Rivers",
+      "relationship": "grandson",
+      "gender": "male",
+      "birthday": "2018-04-09",
+      "parent": "Theodore Rivers",
+      "interests": ["Legos", "reading"]
+    },
+    {
+      "name": "Wren Rivers",
+      "relationship": "granddaughter",
+      "gender": "female",
+      "parent": "Theodore Rivers",
+      "interests": ["swimming"]
+    }
+  ],
+  "activities": [
+    {
+      "title": "Aquarium Weekend",
+      "activity_date": "2025-01-01",
+      "category": "travel",
+      "participant_names": ["Pia Rivers", "Wren Rivers"],
+      "notes": "Girls trip."
+    },
+    {
+      "title": "Brick Park",
+      "activity_date": "2024-06-01",
+      "category": "theme_park",
+      "participant_names": ["Otis Rivers"],
+      "notes": "First dedicated boys trip."
+    }
+  ]
+}

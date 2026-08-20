@@ -73,7 +73,7 @@ class FamilyInput(Base):
 
 
 class FamilyRequest(Base):
-    """An ask from Cordia to family (e.g. 'source gift ideas for Bea')."""
+    """An ask from Cordia to family (e.g. 'source gift ideas for a grandchild')."""
     __tablename__ = "family_requests"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

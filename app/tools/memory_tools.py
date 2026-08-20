@@ -16,7 +16,7 @@ TOOL_SCHEMAS = [
                 },
                 "subject": {
                     "type": "string",
-                    "description": "Brief label for this memory (e.g. 'seat preference', 'grandchild Emma interests')",
+                    "description": "Brief label for this memory (e.g. 'seat preference', 'grandchild interests')",
                 },
                 "content": {
                     "type": "string",
@@ -25,7 +25,7 @@ TOOL_SCHEMAS = [
                 "tags": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Optional tags for retrieval (e.g. ['travel', 'flights', 'emma'])",
+                    "description": "Optional tags for retrieval (e.g. ['travel', 'flights', 'gifts'])",
                 },
             },
             "required": ["category", "subject", "content"],
@@ -59,6 +59,9 @@ async def store_memory_handler(db: AsyncSession, **kwargs) -> dict:
 
 
 async def recall_memory_handler(db: AsyncSession, **kwargs) -> dict:
+    # feature_request rows are an internal team backlog, not something Cordia
+    # told Cord — keep them out of recall the same way the prompt block does.
+    kwargs.setdefault("exclude_categories", ["feature_request"])
     memories = await memory_service.search_memories(db, **kwargs)
     return {
         "memories": [

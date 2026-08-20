@@ -105,7 +105,7 @@ async def process_inbound_email(db: AsyncSession, sender: str, subject: str, bod
     if role == "trusted_contact":
         # Capture-only: process into Cordia's thread, notify her, never reply to sender.
         wrapped = _CAPTURE_ENVELOPE.format(name=member.name, subject=subject or "(no subject)", body=body[:8000])
-        summary = await claude_service.chat(db, conversation.id, wrapped, sender_role="owner")
+        summary = await claude_service.chat(db, conversation.id, wrapped, sender_role="owner", channel="email")
         notify = f"📬 From {member.name}: {summary}"
         if settings.cordia_phone_number:
             from app.services import sms_service
@@ -120,7 +120,7 @@ async def process_inbound_email(db: AsyncSession, sender: str, subject: str, bod
         return True
 
     response_text = await claude_service.chat(
-        db, conversation.id, body, sender_role=role, sender_member=member
+        db, conversation.id, body, sender_role=role, sender_member=member, channel="email"
     )
     reply_subject = subject if subject.lower().startswith("re:") else f"Re: {subject or 'your note'}"
     await email_service.send_email(to=sender, subject=reply_subject, body_markdown=response_text)
