@@ -70,7 +70,7 @@ async def health_test_send(secret: str = "", to: str = "") -> dict:
     # Call the provider directly so we can surface the raw HTTP response
     payload = {
         "senderPhoneNumber": signalhouse_service._digits(settings.signalhouse_phone_number),
-        "recipientPhoneNumber": signalhouse_service._digits(target),
+        "recipientPhoneNumber": [signalhouse_service._digits(target)],
         "messageBody": "Cord test message - if you received this, outbound SMS is working.",
     }
     url = settings.signalhouse_base_url.rstrip("/") + settings.signalhouse_send_path
