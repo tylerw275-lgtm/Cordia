@@ -1,7 +1,7 @@
 from typing import Callable
 
 from app.config import settings
-from app.tools import calendar_tools, email_tools, family_circle_tools, family_tools, lease_tools, memory_tools
+from app.tools import calendar_tools, email_tools, family_circle_tools, family_tools, feature_tools, lease_tools, memory_tools
 
 # Always-on tools (owner / Cordia)
 _BASE_TOOLS: list[dict] = [
@@ -9,6 +9,7 @@ _BASE_TOOLS: list[dict] = [
     *family_tools.TOOL_SCHEMAS,  # now includes get_grandkid_activity_balance, log_grandkid_activity, update_family_member_notes
     *calendar_tools.TOOL_SCHEMAS,
     *family_circle_tools.OWNER_TOOL_SCHEMAS,
+    *feature_tools.TOOL_SCHEMAS,
 ]
 
 _BASE_HANDLERS: dict[str, Callable] = {
@@ -23,6 +24,7 @@ _BASE_HANDLERS: dict[str, Callable] = {
     "schedule_family_event": calendar_tools.schedule_event_handler,
     "list_events_by_location": calendar_tools.list_events_by_location_handler,
     **family_circle_tools.OWNER_EXTRA_HANDLERS,
+    **feature_tools.HANDLERS,
 }
 
 
