@@ -45,22 +45,22 @@ async def test_list_upcoming_events(db):
 @pytest.mark.asyncio
 async def test_lookup_by_alias(db):
     await family_service.create_family_member(
-        db, name="Aaron Wilkinson", relationship="son", aliases=["Brad"]
+        db, name="Dominic Rivers", relationship="son", aliases=["Brad"]
     )
     found = await family_service.get_family_member_by_name(db, "brad")
-    assert found is not None and found.name == "Aaron Wilkinson"
+    assert found is not None and found.name == "Dominic Rivers"
 
 
 @pytest.mark.asyncio
 async def test_lookup_with_apostrophe_is_safe(db):
-    await family_service.create_family_member(db, name="Aaron Wilkinson", relationship="son")
+    await family_service.create_family_member(db, name="Dominic Rivers", relationship="son")
     assert await family_service.get_family_member_by_name(db, "O'Brien") is None
 
 
 @pytest.mark.asyncio
 async def test_lookup_injection_attempt_finds_nothing_and_preserves_data(db):
     await family_service.create_family_member(
-        db, name="Aaron Wilkinson", relationship="son", aliases=["Brad"]
+        db, name="Dominic Rivers", relationship="son", aliases=["Brad"]
     )
     # A boolean-injection payload must be treated as a literal name.
     assert await family_service.get_family_member_by_name(db, "' OR '1'='1") is None
@@ -69,14 +69,14 @@ async def test_lookup_injection_attempt_finds_nothing_and_preserves_data(db):
 
 @pytest.mark.asyncio
 async def test_lookup_treats_wildcards_literally(db):
-    await family_service.create_family_member(db, name="Aaron Wilkinson", relationship="son")
+    await family_service.create_family_member(db, name="Dominic Rivers", relationship="son")
     assert await family_service.get_family_member_by_name(db, "%") is None
     assert await family_service.get_family_member_by_name(db, "_") is None
 
 
 @pytest.mark.asyncio
 async def test_lookup_prefers_exact_match(db):
-    await family_service.create_family_member(db, name="Anna Wilkinson", relationship="granddaughter")
+    await family_service.create_family_member(db, name="Anna Rivers", relationship="granddaughter")
     await family_service.create_family_member(db, name="Anna", relationship="daughter-in-law")
     found = await family_service.get_family_member_by_name(db, "Anna")
     assert found.name == "Anna"

@@ -53,7 +53,7 @@ class _Reply:
 
 
 @pytest.mark.asyncio
-async def test_family_roster_reaches_the_model(db, mocker):
+async def test_family_roster_reaches_the_model(db, seed_doc, mocker):
     """"What do you know about my family" must arrive at the model with the
     family already in the system prompt — the production bug was an empty
     table, so Cord truthfully answered that it had no profiles.
@@ -66,7 +66,7 @@ async def test_family_roster_reaches_the_model(db, mocker):
     from app.services import claude_service
     from app.services.family_seed import seed_family
 
-    await seed_family(db)
+    await seed_family(db, seed_doc)
 
     create = mocker.patch.object(
         claude_service._client.messages, "create",
@@ -80,8 +80,10 @@ async def test_family_roster_reaches_the_model(db, mocker):
     create.assert_awaited()
     system = " ".join(b["text"] for b in create.await_args.kwargs["system"])
     assert "FAMILY ROSTER" in system
-    for name in ("Aaron Wilkinson", "Ryan Wilkinson", "Tyler Wilkinson", "Brighton Wilkinson"):
-        assert name in system
+    for member in seed_doc.members:
+        assert member.name in system
     # ...and no contact details ride along. (The roster block's exclusion of
     # aliases is asserted directly in tests/test_system_prompt.py.)
-    assert "6158539483" not in system
+    for member in seed_doc.members:
+        if member.phone:
+            assert member.phone not in system

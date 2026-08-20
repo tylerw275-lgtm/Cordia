@@ -54,6 +54,11 @@ class Settings(BaseSettings):
     email_inbound_secret: str = ""  # optional shared secret for the inbound webhook
     owner_email: str = ""  # Cordia's destination inbox
 
+    # The family roster itself, as JSON. Deliberately NOT in the repo: it holds
+    # names, children's dates of birth, phone numbers and home addresses.
+    family_seed_json: str = ""
+    family_seed_path: str = ""  # local-dev / CLI alternative; inline wins
+
     # Load Cordia's family roster on boot (idempotent). Keeps a fresh or reset
     # database self-healing instead of depending on someone running a script.
     seed_family_on_startup: bool = True

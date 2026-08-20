@@ -12,10 +12,10 @@ async def _make_member(db, name, phone, relationship="son"):
 
 @pytest.mark.asyncio
 async def test_resolve_by_phone_and_access_gating(db):
-    await _make_member(db, "Aaron Test", "6158539483")
+    await _make_member(db, "Aaron Test", "5555550101")
 
     # Twilio sends +1 prefix; resolver normalizes to last 10 digits
-    m = await circle.resolve_member_by_phone(db, "+16158539483")
+    m = await circle.resolve_member_by_phone(db, "+15555550101")
     assert m is not None and m.name == "Aaron Test"
 
     # Access is denied by default

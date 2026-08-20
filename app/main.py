@@ -23,8 +23,35 @@ logger = structlog.get_logger()
 async def _bootstrap_family_data() -> None:
     """Load the family roster on boot. Never raises — a seeding problem must
     not take the assistant down, but it must be loud in the logs."""
+    from sqlalchemy import func, select
+
+    from app.data.family_seed_loader import SeedInvalid, load_seed_document
     from app.database import get_db_session
+    from app.models.family import FamilyMember
     from app.services.family_seed import seed_family
+
+    # Parse before touching the database or the lock: a bad document must seed
+    # nothing rather than half a family, and must never block boot.
+    try:
+        seed = load_seed_document()
+    except SeedInvalid as e:
+        logger.error("family_seed_invalid", error=str(e))
+        seed = None
+
+    if seed is None:
+        try:
+            async with get_db_session() as db:
+                count = await db.scalar(select(func.count()).select_from(FamilyMember))
+            if count:
+                logger.info("family_seed_not_configured", members_in_db=count)
+            else:
+                # The original bug: no roster anywhere, so Cord tells Cordia her
+                # family profiles haven't been loaded.
+                logger.error("family_seed_unconfigured_and_db_empty",
+                             hint="set FAMILY_SEED_JSON")
+        except Exception as e:
+            logger.error("family_seed_status_check_failed", error=str(e))
+        return
 
     try:
         async with get_db_session() as db:
@@ -37,7 +64,7 @@ async def _bootstrap_family_data() -> None:
                 logger.info("family_bootstrap_skipped", reason="another instance holds the lock")
                 return
             try:
-                summary = await seed_family(db)
+                summary = await seed_family(db, seed)
                 logger.info(
                     "family_bootstrap", **{k: v for k, v in summary.items() if isinstance(v, int)}
                 )
@@ -175,9 +202,22 @@ async def health_data() -> dict:
     now tells you whether the data layer is actually populated."""
     from app.database import get_db_session
 
+    from app.data.family_seed_loader import SeedInvalid, load_seed_document
+
     tables = ["family_members", "grandkid_activities", "family_events", "memories",
               "conversations", "messages", "contacts"]
     counts: dict = {}
+    try:
+        seed = load_seed_document()
+        if seed is None:
+            counts["family_seed_source"] = "unset"
+            counts["family_seed_members"] = 0
+        else:
+            counts["family_seed_source"] = "env" if settings.family_seed_json.strip() else "path"
+            counts["family_seed_members"] = len(seed.members)
+    except SeedInvalid as e:
+        counts["family_seed_source"] = "invalid"
+        counts["family_seed_error"] = str(e)
     async with get_db_session() as db:
         for table in tables:
             try:

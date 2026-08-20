@@ -164,8 +164,10 @@ OutboundMessages (draft/approve/send queue) — migration `006`.
 - `app/tools/` (+ `registry.py`) — every capability the AI can call.
 - `app/scheduler/` — the proactive jobs.
 - `app/api/compliance.py` — consent / privacy / terms / opt-in pages.
-- `app/data/family_seed.py` + `app/services/family_seed.py` — the family roster and the
-  idempotent boot-time load.
+- `app/data/family_seed_loader.py` + `app/services/family_seed.py` — parse the roster
+  from `FAMILY_SEED_JSON` and load it idempotently on boot. The roster itself is
+  configuration, never source: a malformed document seeds nothing and logs the failing
+  field path (never the value), and an unset one with an empty database logs an ERROR.
 - `app/api/duffel_webhooks.py` — booking confirmations.
 
 ---
@@ -180,7 +182,8 @@ OutboundMessages (draft/approve/send queue) — migration `006`.
    request without it), and (for email) the Gmail address + app password or Resend key.
 4. **End-to-end tests on the real number/inbox:** inbound text and email → AI reply;
    STOP/START/HELP; photo message; web consent form; a family-member enrollment.
-5. ~~Load Cordia's family data~~ — now automatic. The roster (members, birthdays,
+5. **Set `FAMILY_SEED_JSON` in Railway** (the family roster as JSON — it is
+   deliberately not in the repo). Then loading is automatic. The roster (members, birthdays,
    kids) loads on every boot from `app/data/family_seed.py`; the load is idempotent,
    so a redeploy or a database reset self-heals. Check it with
    `GET /health/data`. Set `SEED_FAMILY_ON_STARTUP=false` to turn it off.

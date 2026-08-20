@@ -15,7 +15,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.data.family_seed import ACTIVITIES, FAMILY
+from app.data.family_seed_loader import SeedDocument
 from app.models.family import FamilyMember, GrandkidActivity
 from app.services import family_service
 
@@ -82,17 +82,19 @@ async def _activity_exists(db: AsyncSession, title: str, activity_date) -> bool:
     return result.first() is not None
 
 
-async def seed_family(db: AsyncSession) -> dict:
+async def seed_family(db: AsyncSession, seed: SeedDocument) -> dict:
     """Create any missing family members and historical activities.
 
     Safe to call repeatedly — running it twice creates no duplicate members and
-    no duplicate activities.
+    no duplicate activities. The roster is passed in rather than imported so
+    that no real data lives in the repository and tests can use a fixture.
     """
     created: list[str] = []
     updated: list[str] = []
     activities_created: list[str] = []
 
-    for data in FAMILY:
+    for member_spec in seed.members:
+        data = member_spec.to_kwargs()
         existing = await _find_exact(db, data["name"])
         if existing:
             changed = _backfill(existing, data) | _merge_notes(existing, data)
@@ -100,25 +102,24 @@ async def seed_family(db: AsyncSession) -> dict:
                 await db.commit()
                 updated.append(data["name"])
             continue
-        kwargs = {k: v for k, v in data.items() if k != "parent"}
-        member = await family_service.create_family_member(db, **kwargs)
+        member = await family_service.create_family_member(db, **data)
         created.append(member.name)
 
     # Second pass: parent links, once every member exists.
-    for data in FAMILY:
-        if "parent" not in data:
+    for member_spec in seed.members:
+        if not member_spec.parent:
             continue
-        member = await _find_exact(db, data["name"])
-        parent = await _find_exact(db, data["parent"])
+        member = await _find_exact(db, member_spec.name)
+        parent = await _find_exact(db, member_spec.parent)
         if member is not None and parent is not None and member.parent_id is None:
             member.parent_id = parent.id
             await db.commit()
 
-    for act in ACTIVITIES:
-        if await _activity_exists(db, act["title"], act["activity_date"]):
+    for activity in seed.activities:
+        if await _activity_exists(db, activity.title, activity.activity_date):
             continue
-        await family_service.log_grandkid_activity(db, **act)
-        activities_created.append(act["title"])
+        await family_service.log_grandkid_activity(db, **activity.model_dump())
+        activities_created.append(activity.title)
 
     return {
         "members_created": len(created),

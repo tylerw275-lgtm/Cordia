@@ -10,3 +10,7 @@ build/
 .pytest_cache/
 .mypy_cache/
 *.log
+
+# Local-only family data — never commit
+family_seed.local*.json
+family_seed.json

@@ -10,28 +10,33 @@ from app.services.family_seed import seed_family
 
 
 @pytest.mark.asyncio
-async def test_roster_lists_everyone_with_relationships(db):
-    await seed_family(db)
+async def test_roster_lists_everyone_with_relationships(db, seed_doc):
+    await seed_family(db, seed_doc)
     roster = await family_service.get_family_roster_text(db)
 
-    for name in ("Aaron Wilkinson", "Ryan Wilkinson", "Tyler Wilkinson", "Bea Wilkinson"):
-        assert name in roster
-    assert "son" in roster and "grandson" in roster
-    assert "child of Aaron Wilkinson" in roster   # parent links render
+    for member in seed_doc.members:
+        assert member.name in roster
+    assert "son" in roster and "granddaughter" in roster
+    assert "child of Dominic Rivers" in roster   # parent links render
 
 
 @pytest.mark.asyncio
-async def test_roster_omits_aliases_and_contact_details(db):
-    await seed_family(db)
+async def test_roster_omits_aliases_and_contact_details(db, seed_doc):
+    await seed_family(db, seed_doc)
     roster = await family_service.get_family_roster_text(db)
 
     # The prompt forbids Cord from ever acknowledging the alias mapping or
     # reading back stored contact details — so neither belongs in the prompt.
-    assert "Brad" not in roster
-    assert "Hunter" not in roster
-    assert "6158539483" not in roster
-    assert "wilkinson.bea@icloud.com" not in roster
-    assert "1019 Amelia Park" not in roster
+    # Derived from the document rather than hardcoded, so this can't rot when a
+    # member gains a contact field.
+    for member in seed_doc.members:
+        for alias in member.aliases or []:
+            assert alias not in roster, f"alias {alias} leaked into the roster"
+        for detail in (member.phone, member.email, member.address):
+            if detail:
+                assert detail not in roster, f"contact detail leaked into the roster"
+    # city is rendered deliberately
+    assert "Springfield" in roster
 
 
 @pytest.mark.asyncio
@@ -43,8 +48,8 @@ async def test_empty_family_renders_an_explicit_no_data_block(db):
 
 def test_roster_is_byte_stable_across_calls():
     class M:
-        id, parent_id, nickname, state, anniversary = 1, None, None, "TN", None
-        name, relationship, city = "Aaron Wilkinson", "son", "Franklin"
+        id, parent_id, nickname, state, anniversary = 1, None, None, "IL", None
+        name, relationship, city = "Dominic Rivers", "son", "Springfield"
         birthday = date(1983, 8, 7)
         interests = ["swimming", "golf"]
         personality_notes = "Built a pool."
@@ -110,7 +115,7 @@ def test_cache_breakpoint_still_set_without_a_roster():
 
 def test_family_role_prompt_never_includes_the_roster():
     # Family-circle members must not see Cordia's private family data.
-    blocks = build_family_system_prompt("Kristen")
+    blocks = build_family_system_prompt("Marta")
     text = " ".join(b["text"] for b in blocks)
     assert "FAMILY ROSTER" not in text
-    assert "Brad" not in text
+    assert "Nico" not in text  # the fixture's alias
