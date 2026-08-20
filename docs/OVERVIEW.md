@@ -16,7 +16,7 @@ with a database, running on Railway.
 
 ## 2. How it works (plain English)
 
-**By text:** Cordia texts the Cordia AI number → Twilio (the SMS provider) forwards it
+**By text:** Cordia texts Cord at **(629) 225-9067** → Signal House (the SMS provider) forwards it
 to the app → the app confirms it's really her and really from Twilio → Claude reads the
 message plus relevant memory and recent history, optionally uses a "tool" (e.g. search
 flights), and texts back. She can even send a **photo** and the assistant can understand
@@ -87,6 +87,12 @@ SMS program name remains "Cordia AI by AI-Gen Partners" for compliance.)
   producer-grade plan, not generic tips. Prompting adapts automatically to whichever
   Claude model is configured.
 
+**Learning & expectations**
+- If a reply takes more than a few seconds, Cord texts a short "working on this" note.
+- Cord only ever offers capabilities that are actually switched on; anything gated is
+  described as "in development," and Cordia can ask for features she wants — they're
+  logged for the team (`request_feature`).
+
 **Lease / document review**
 - Analyzes a lease, flags clauses by severity (standard / flag / urgent), stores a
   summary, and can schedule renewal-deadline reminders.
@@ -111,8 +117,9 @@ built everything reviewers ask for:
 - Family members enroll compliantly: Cordia shares the consent link person-to-person;
   they sign, then text START. The assistant never messages anyone first.
 
-**Status:** carrier registration is in review. Getting it approved (or a Toll-Free
-number verified as a faster fallback) is the #1 thing standing between us and go-live.
+**Status: APPROVED and live.** The campaign is registered through Signal House under
+brand AI-Gen Partners (Marq LLC), sending from **+1 (629) 225-9067**. Consent pages live
+at cordia.aigenpartners.com; the opt-in page carries the consent form itself.
 
 ---
 
@@ -121,7 +128,11 @@ number verified as a faster fallback) is the #1 thing standing between us and go
 **Stack**
 - Python + **FastAPI**; **PostgreSQL** via async SQLAlchemy; **Alembic** migrations
   (through `005_flight_bookings`); **APScheduler** for recurring jobs.
-- **SMS/MMS:** Twilio. Inbound webhook `POST /webhook/sms`, Twilio signature verified.
+- **SMS:** Signal House (10DLC campaign approved). Inbound webhook
+  `POST /webhook/signalhouse` (shared-secret auth); outbound via their REST API.
+  Provider is swappable via `SMS_PROVIDER` (`app/services/sms_service.py`); the Twilio
+  driver remains as a fallback. Webhooks acknowledge immediately and process in the
+  background, with duplicate-delivery suppression.
   Sender allow-list = Cordia + a test number; family numbers resolved via the DB.
 - **Email:** two-way. Gmail (IMAP poll every ~120s + SMTP send) or Resend (inbound
   webhook + API send). See `app/services/email_inbound.py`, `app/scheduler/jobs/email_poll.py`.
@@ -134,7 +145,9 @@ number verified as a faster fallback) is the #1 thing standing between us and go
 - **Flights:** Duffel API (`search_flights`, `get_offer`, `create_link_session`,
   `get_order`); booking webhook `POST /webhook/duffel` (HMAC-verified) + `/booking/*`
   landing pages.
-- **Hosting:** Railway. All secrets/config via environment variables.
+- **Hosting:** Railway, served at **cordia.aigenpartners.com**. All secrets/config via
+  environment variables. `/health/config` and `/health/test-send` are secret-gated
+  deployment diagnostics.
 
 **Feature flags (`app/config.py`)**
 - `enable_flight_search` (on) · `enable_lease_review` (on) · `enable_family_coordination`
@@ -164,11 +177,12 @@ OutboundMessages (draft/approve/send queue) — migration `006`.
 
 ## 6. What's needed to successfully launch (checklist)
 
-1. **A2P 10DLC approval** (or a Toll-Free number + toll-free verification as the faster
-   fallback). Highest priority — most everything else is ready behind it.
-2. **A live phone number owned by the correct Twilio account/brand** to send/receive on.
-3. **Production secrets set in Railway:** Twilio credentials, Anthropic API key, Duffel
-   token, database URL, and (for email) the Gmail address + app password or Resend key.
+1. ~~**A2P 10DLC approval**~~ — **DONE.** Campaign approved through Signal House
+   (brand AI-Gen Partners / Marq LLC); program number **+1 (629) 225-9067** is live.
+2. ~~**A live phone number**~~ — **DONE.**
+3. **Production secrets set in Railway:** Signal House API key + webhook secret,
+   Anthropic API key, Duffel token, database URL, and (for email) the Gmail address +
+   app password or Resend key. *(All set — verified live.)*
 4. **End-to-end tests on the real number/inbox:** inbound text and email → AI reply;
    STOP/START/HELP; photo message; web consent form; a family-member enrollment.
 5. **Load Cordia's family data** (members, birthdays, kids) so the proactive features
