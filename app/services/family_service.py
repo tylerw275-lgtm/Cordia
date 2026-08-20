@@ -14,9 +14,13 @@ async def get_family_member(db: AsyncSession, member_id: uuid.UUID) -> FamilyMem
     return result.scalar_one_or_none()
 
 
-def _like_escape(value: str) -> str:
+def like_escape(value: str) -> str:
     """Escape LIKE wildcards so user/model input matches literally."""
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+# Backwards-compatible private alias.
+_like_escape = like_escape
 
 
 async def get_family_member_by_name(db: AsyncSession, name: str) -> FamilyMember | None:
@@ -32,7 +36,7 @@ async def get_family_member_by_name(db: AsyncSession, name: str) -> FamilyMember
     name_lower = name.strip().lower()
     if not name_lower:
         return None
-    pattern = f"%{_like_escape(name_lower)}%"
+    pattern = f"%{like_escape(name_lower)}%"
 
     alias_match = sa.text(
         "EXISTS (SELECT 1 FROM unnest(aliases) a WHERE lower(a) LIKE :alias_pat ESCAPE '\\')"
@@ -41,7 +45,7 @@ async def get_family_member_by_name(db: AsyncSession, name: str) -> FamilyMember
     exactness = case(
         (func.lower(FamilyMember.name) == name_lower, 0),
         (func.lower(FamilyMember.nickname) == name_lower, 1),
-        (func.lower(FamilyMember.name).like(f"{_like_escape(name_lower)}%", escape="\\"), 2),
+        (func.lower(FamilyMember.name).like(f"{like_escape(name_lower)}%", escape="\\"), 2),
         else_=3,
     )
 
@@ -99,6 +103,12 @@ async def update_family_member(db: AsyncSession, member_id: uuid.UUID, **kwargs)
     return member
 
 
+# Fields the model may edit through update_family_member_notes. Deliberately
+# excludes phone, email, address and has_circle_access: writing those would let
+# a crafted tool call redirect contact details or grant family-circle SMS access.
+_EDITABLE_NOTE_FIELDS = frozenset({"personality_notes", "interests", "school_name", "grade_level", "nickname"})
+
+
 async def update_family_member_notes(db: AsyncSession, name: str, field: str, value: str) -> bool:
     """Update a specific field on a family member by name. Used by Claude for perpetual learning."""
     member = await get_family_member_by_name(db, name)
@@ -111,7 +121,7 @@ async def update_family_member_notes(db: AsyncSession, name: str, field: str, va
         existing = list(member.interests or [])
         new_items = [v.strip() for v in value.split(",") if v.strip() not in existing]
         member.interests = existing + new_items
-    elif hasattr(member, field):
+    elif field in _EDITABLE_NOTE_FIELDS:
         setattr(member, field, value)
     else:
         return False
@@ -245,6 +255,11 @@ async def get_grandkid_activity_balance(db: AsyncSession) -> dict:
 # Family roster for the system prompt
 # ---------------------------------------------------------------------------
 
+# Relationships for which a parent_id means "is the child of". Other rows may
+# carry a parent_id for other reasons; rendering those as "child of" would state
+# something false in every prompt.
+_CHILD_RELATIONSHIPS = frozenset({"son", "daughter", "grandson", "granddaughter"})
+
 _NO_FAMILY_LOADED = (
     "FAMILY PROFILES: none are loaded in the database. Do not invent or guess "
     "family details, and do not ask Cordia to re-enter them — tell her the "
@@ -274,8 +289,13 @@ def format_family_roster(members: Sequence[FamilyMember], today: date | None = N
 
     lines = []
     for m in members:
-        parts = [m.name if not m.nickname else f"{m.name} ({m.nickname})", f"— {m.relationship}"]
-        parent_name = names_by_id.get(m.parent_id) if m.parent_id else None
+        name = m.name if not m.nickname else f"{m.name} ({m.nickname})"
+        parts = [f"{name} — {m.relationship}"]
+        parent_name = (
+            names_by_id.get(m.parent_id)
+            if m.parent_id and (m.relationship or "").lower() in _CHILD_RELATIONSHIPS
+            else None
+        )
         if parent_name:
             parts.append(f"child of {parent_name}")
         if m.city:

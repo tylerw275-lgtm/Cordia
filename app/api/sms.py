@@ -1,9 +1,10 @@
 import asyncio
+import hmac
 import logging
 from collections import OrderedDict
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Form, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Request, Response
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -256,10 +257,12 @@ async def receive_signalhouse_sms(request: Request, background: BackgroundTasks)
     messageBody, direction: "INBOUND", ...}}}. Other event types (delivery
     receipts, balance alerts) are acknowledged and ignored."""
     supplied = request.query_params.get("secret") or request.headers.get("X-Webhook-Secret", "")
-    if not settings.signalhouse_webhook_secret or supplied != settings.signalhouse_webhook_secret:
+    if not settings.signalhouse_webhook_secret or not hmac.compare_digest(
+        supplied.encode("utf-8"), settings.signalhouse_webhook_secret.encode("utf-8")
+    ):
         if not settings.debug:
             logger.warning("Signal House webhook rejected: bad or missing shared secret")
-            return {"status": "unauthorized"}
+            raise HTTPException(status_code=401, detail="Unauthorized")
 
     try:
         payload = await request.json()

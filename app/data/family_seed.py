@@ -52,7 +52,6 @@ FAMILY = [
         "birthday": date(1980, 9, 7),
         "phone": "16154232821",
         "personality_notes": "Aaron's wife. Mother of Brighton and Bea.",
-        "parent": "Aaron Wilkinson",  # used to resolve spouse relationship context
     },
     {
         "name": "Kristen Wilkinson",

@@ -246,9 +246,11 @@ async def get_family_circle_updates_handler(db: AsyncSession, **kw) -> dict:
 async def share_event_with_family_handler(db: AsyncSession, **kw) -> dict:
     from sqlalchemy import select, func
     from app.models.family import FamilyEvent
-    q = f"%{kw['event_title'].lower()}%"
+    from app.services.family_service import like_escape
+    q = f"%{like_escape(kw['event_title'].lower())}%"
     result = await db.execute(
-        select(FamilyEvent).where(func.lower(FamilyEvent.title).like(q)).where(FamilyEvent.event_date >= date.today())
+        select(FamilyEvent).where(func.lower(FamilyEvent.title).like(q, escape="\\"))
+        .where(FamilyEvent.event_date >= date.today())
     )
     events = result.scalars().all()
     for e in events:

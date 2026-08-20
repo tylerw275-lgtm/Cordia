@@ -124,8 +124,9 @@ def _normalize_phone_e164(phone: str | None) -> str | None:
 
 
 async def get_contact_by_name(db: AsyncSession, name: str) -> Contact | None:
-    q = f"%{(name or '').strip().lower()}%"
-    result = await db.execute(select(Contact).where(func.lower(Contact.name).like(q)))
+    from app.services.family_service import like_escape
+    q = f"%{like_escape((name or '').strip().lower())}%"
+    result = await db.execute(select(Contact).where(func.lower(Contact.name).like(q, escape="\\")))
     return result.scalars().first()
 
 

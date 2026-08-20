@@ -27,5 +27,7 @@ async def require_admin(
     """
     expected = settings.admin_api_secret
     supplied = x_admin_secret or secret or ""
-    if not expected or not hmac.compare_digest(supplied, expected):
+    # Compare as bytes: hmac.compare_digest raises TypeError on non-ASCII str,
+    # which would turn a bad header into a 500 instead of a 401.
+    if not expected or not hmac.compare_digest(supplied.encode("utf-8"), expected.encode("utf-8")):
         raise HTTPException(status_code=401, detail="Unauthorized")

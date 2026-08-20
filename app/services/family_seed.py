@@ -12,11 +12,11 @@ through ``update_family_member_notes`` survive a reseed.
 import logging
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.data.family_seed import ACTIVITIES, FAMILY
-from app.models.family import GrandkidActivity
+from app.models.family import FamilyMember, GrandkidActivity
 from app.services import family_service
 
 logger = logging.getLogger(__name__)
@@ -57,6 +57,22 @@ def _backfill(member, data: dict[str, Any]) -> bool:
     return changed
 
 
+async def _find_exact(db: AsyncSession, name: str) -> FamilyMember | None:
+    """Resolve a seed row by EXACT name.
+
+    Deliberately not family_service.get_family_member_by_name: that does
+    substring matching, which is right for "who does Cordia mean?" and wrong
+    for "does this row already exist?". Seeding "Sarah" through the fuzzy
+    resolver matches a pre-existing "Sarah Jane Kowalski" and backfills a
+    different person's phone, birthday and address onto her — and because the
+    real row then never gets created, every later boot repeats it.
+    """
+    result = await db.execute(
+        select(FamilyMember).where(func.lower(FamilyMember.name) == name.strip().lower())
+    )
+    return result.scalars().first()
+
+
 async def _activity_exists(db: AsyncSession, title: str, activity_date) -> bool:
     result = await db.execute(
         select(GrandkidActivity.id)
@@ -77,7 +93,7 @@ async def seed_family(db: AsyncSession) -> dict:
     activities_created: list[str] = []
 
     for data in FAMILY:
-        existing = await family_service.get_family_member_by_name(db, data["name"])
+        existing = await _find_exact(db, data["name"])
         if existing:
             changed = _backfill(existing, data) | _merge_notes(existing, data)
             if changed:
@@ -92,8 +108,8 @@ async def seed_family(db: AsyncSession) -> dict:
     for data in FAMILY:
         if "parent" not in data:
             continue
-        member = await family_service.get_family_member_by_name(db, data["name"])
-        parent = await family_service.get_family_member_by_name(db, data["parent"])
+        member = await _find_exact(db, data["name"])
+        parent = await _find_exact(db, data["parent"])
         if member is not None and parent is not None and member.parent_id is None:
             member.parent_id = parent.id
             await db.commit()

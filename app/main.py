@@ -28,13 +28,29 @@ async def _bootstrap_family_data() -> None:
 
     try:
         async with get_db_session() as db:
-            # Advisory lock so two replicas booting together don't race.
-            await db.execute(sa_text("SELECT pg_advisory_lock(4820193)"))
+            # try_ rather than plain pg_advisory_lock: the lock is session-scoped
+            # and pooled connections outlive a failed boot, so a blocking acquire
+            # could wait forever and hang startup — with no healthcheck, no SMS.
+            # If another replica holds it, that replica is seeding; skip.
+            got = await db.scalar(sa_text("SELECT pg_try_advisory_lock(4820193)"))
+            if not got:
+                logger.info("family_bootstrap_skipped", reason="another instance holds the lock")
+                return
             try:
                 summary = await seed_family(db)
+                logger.info(
+                    "family_bootstrap", **{k: v for k, v in summary.items() if isinstance(v, int)}
+                )
             finally:
-                await db.execute(sa_text("SELECT pg_advisory_unlock(4820193)"))
-        logger.info("family_bootstrap", **{k: v for k, v in summary.items() if isinstance(v, int)})
+                # Roll back first: a failed statement poisons the transaction, and
+                # the unlock would raise InFailedSQLTransaction, masking the real
+                # error AND leaking the lock.
+                try:
+                    await db.rollback()
+                    await db.execute(sa_text("SELECT pg_advisory_unlock(4820193)"))
+                    await db.commit()
+                except Exception as unlock_error:
+                    logger.error("family_bootstrap_unlock_failed", error=str(unlock_error))
     except Exception as e:
         logger.error("family_bootstrap_failed", error=str(e), error_type=type(e).__name__)
 

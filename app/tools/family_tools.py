@@ -78,7 +78,7 @@ TOOL_SCHEMAS = [
                 "name": {"type": "string", "description": "Family member's name"},
                 "field": {
                     "type": "string",
-                    "enum": ["interests", "personality_notes", "email", "phone", "address", "grade_level"],
+                    "enum": ["interests", "personality_notes", "nickname", "school_name", "grade_level"],
                     "description": "Which field to update",
                 },
                 "value": {"type": "string", "description": "New value or addition to append"},
@@ -102,10 +102,12 @@ async def get_family_member_handler(db: AsyncSession, name: str, **kwargs) -> di
         "gender": member.gender,
         "city": member.city,
         "state": member.state,
-        "address": member.address,
         "birthday": member.birthday.isoformat() if member.birthday else None,
-        "email": member.email,
-        "phone": member.phone,
+        # Contact details are deliberately withheld — the system prompt forbids
+        # ever reading them back, and the send paths resolve addresses
+        # server-side. Presence flags only, matching find_contact.
+        "has_email": bool(member.email),
+        "has_phone": bool(member.phone),
         "school_name": member.school_name,
         "grade_level": member.grade_level,
         "interests": member.interests or [],

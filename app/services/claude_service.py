@@ -75,20 +75,37 @@ _REPLAYABLE_KEYS = {
     "tool_use": ("type", "id", "name", "input"),
     "tool_result": ("type", "tool_use_id", "content", "is_error"),
 }
+# Keys without which the block is structurally invalid to the API.
+_REQUIRED_KEYS = {
+    "text": ("text",),
+    "tool_use": ("id", "name", "input"),
+    "tool_result": ("tool_use_id",),
+}
+# tool_use is assistant-only and tool_result user-only. Without this, a user who
+# literally texts a JSON array of tool_use blocks poisons their own thread.
+_ALLOWED_BY_ROLE = {
+    "assistant": {"text", "tool_use"},
+    "user": {"text", "tool_result"},
+}
 
 
-def _to_api_block(block: Any) -> dict | None:
+def _to_api_block(block: Any, role: str) -> dict | None:
     """Normalize one persisted content block for replay, or drop it."""
     if not isinstance(block, dict):
         return None
-    keys = _REPLAYABLE_KEYS.get(block.get("type"))
+    block_type = block.get("type")
+    keys = _REPLAYABLE_KEYS.get(block_type)
     if keys is None:
         # thinking / redacted_thinking / anything new: not replayable from the DB
+        return None
+    if block_type not in _ALLOWED_BY_ROLE.get(role, set()):
+        return None
+    if any(block.get(k) is None for k in _REQUIRED_KEYS[block_type]):
         return None
     return {k: block[k] for k in keys if block.get(k) is not None}
 
 
-def _decode_content(raw: str) -> str | list[dict]:
+def _decode_content(raw: str, role: str) -> str | list[dict]:
     """Persisted content is either plain text or a JSON list of blocks."""
     if not raw.lstrip().startswith("["):
         return raw
@@ -98,7 +115,7 @@ def _decode_content(raw: str) -> str | list[dict]:
         return raw
     if not isinstance(decoded, list) or not all(isinstance(b, dict) and "type" in b for b in decoded):
         return raw
-    blocks = [b for b in (_to_api_block(b) for b in decoded) if b]
+    blocks = [b for b in (_to_api_block(b, role) for b in decoded) if b]
     return blocks or ""
 
 
@@ -145,8 +162,14 @@ def _sanitize_history(turns: list[dict]) -> list[dict]:
             kept.append(turn)
         i += 1
 
-    # The API requires the first turn to be a user turn.
-    while kept and kept[0]["role"] != "user":
+    # The API requires the first turn to be a plain user turn — a leading
+    # tool_result is just as invalid as a leading assistant turn, and popping
+    # only the assistant would expose the tool_result it was paired with.
+    while kept:
+        first = kept[0]
+        blocks = first["content"] if isinstance(first["content"], list) else []
+        if first["role"] == "user" and not any(b.get("type") == "tool_result" for b in blocks):
+            break
         kept.pop(0)
     return kept
 
@@ -156,7 +179,9 @@ def _trim_to_turns(turns: list[dict], max_turns: int) -> list[dict]:
     tool_use/tool_result pair is never split across the boundary."""
     if len(turns) <= max_turns:
         return turns
-    for start in range(len(turns) - max_turns, len(turns)):
+    # Prefer a cut near max_turns, but fall back to any earlier valid boundary
+    # rather than discarding the conversation entirely.
+    for start in list(range(len(turns) - max_turns, len(turns))) + list(range(len(turns) - max_turns)):
         turn = turns[start]
         if turn["role"] != "user":
             continue
@@ -186,10 +211,10 @@ async def _load_history(
     turns: list[dict] = []
     for msg in messages:
         if msg.role in ("user", "assistant"):
-            turns.append({"role": msg.role, "content": _decode_content(msg.content)})
+            turns.append({"role": msg.role, "content": _decode_content(msg.content, msg.role)})
         elif msg.role == "tool":
             # Tool results are persisted as JSON and replayed as a user turn.
-            decoded = _decode_content(msg.content)
+            decoded = _decode_content(msg.content, "user")
             if isinstance(decoded, list) and decoded:
                 turns.append({"role": "user", "content": decoded})
     return _trim_to_turns(_sanitize_history(turns), max_turns)

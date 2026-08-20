@@ -59,6 +59,9 @@ async def store_memory_handler(db: AsyncSession, **kwargs) -> dict:
 
 
 async def recall_memory_handler(db: AsyncSession, **kwargs) -> dict:
+    # feature_request rows are an internal team backlog, not something Cordia
+    # told Cord — keep them out of recall the same way the prompt block does.
+    kwargs.setdefault("exclude_categories", ["feature_request"])
     memories = await memory_service.search_memories(db, **kwargs)
     return {
         "memories": [
