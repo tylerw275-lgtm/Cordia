@@ -168,3 +168,56 @@ def test_the_note_history_stays_bounded_per_person():
     for _ in range(20):
         sms._working_note("+16155550123", "hey")
     assert len(sms._RECENT_NOTES["+16155550123"]) <= sms._NOTE_MEMORY
+
+
+# --- what Cord says when a turn dies ----------------------------------------
+
+@pytest.mark.asyncio
+async def test_a_failure_after_an_interview_says_the_answers_are_safe(db):
+    """She had just answered five questions about a New York evening when the
+    turn died. "Try again" gives no clue whether she is about to be asked all of
+    it again."""
+    from app.models.project import Project
+
+    db.add(Project(
+        title="NYC evening", kind="service_sourcing", status="researching",
+        brief=[{"question": "Which airport?", "answer": "LGA, lands 11:34"},
+               {"question": "How many people?", "answer": "just him and Tom"}],
+    ))
+    await db.commit()
+
+    reply = await sms._failure_reply(db, "+16157080002")
+
+    assert "answers are saved" in reply
+    assert "keep going" in reply
+
+
+@pytest.mark.asyncio
+async def test_a_failure_with_nothing_in_flight_stays_generic(db):
+    """After a one-line question there is nothing to reassure her about."""
+    reply = await sms._failure_reply(db, "+16157080002")
+    assert reply == "Something went wrong on my end. Please try again in a moment."
+
+
+@pytest.mark.asyncio
+async def test_an_unanswered_interview_stays_generic(db):
+    """Questions asked but not yet answered means she lost nothing."""
+    from app.models.project import Project
+
+    db.add(Project(
+        title="NYC evening", kind="service_sourcing", status="intake",
+        brief=[{"question": "Which airport?", "answer": None}],
+    ))
+    await db.commit()
+
+    assert "answers are saved" not in await sms._failure_reply(db, "+16157080002")
+
+
+@pytest.mark.asyncio
+async def test_the_failure_reply_never_raises(db, mocker):
+    """It runs inside an except block. Raising here would turn a bad reply into
+    no reply at all."""
+    mocker.patch.object(db, "execute", new=mocker.AsyncMock(side_effect=RuntimeError("db gone")))
+
+    reply = await sms._failure_reply(db, "+16157080002")
+    assert reply.startswith("Something went wrong")

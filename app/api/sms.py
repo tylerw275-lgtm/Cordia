@@ -250,6 +250,43 @@ async def _notify_if_slow(to: str, body: str = "") -> None:
         raise
 
 
+async def _failure_reply(db: AsyncSession, from_number: str) -> str:
+    """What to say when a turn dies.
+
+    "Something went wrong, try again" is fine after a one-line question and
+    alarming after a five-question interview — she has just spent real effort
+    and has no idea whether she is about to be asked all of it again. If there
+    is an open project with answers on file, say so.
+
+    Runs inside an except block, so it must never raise: a failure here would
+    replace a bad reply with no reply at all.
+    """
+    generic = "Something went wrong on my end. Please try again in a moment."
+    try:
+        from sqlalchemy import select
+
+        from app.models.project import Project
+
+        open_project = (await db.execute(
+            select(Project)
+            .where(Project.status.in_(("intake", "researching")))
+            .order_by(Project.updated_at.desc())
+            .limit(1)
+        )).scalars().first()
+        if open_project is None or not open_project.brief:
+            return generic
+        answered = sum(1 for q in open_project.brief if q.get("answer"))
+        if not answered:
+            return generic
+        return (
+            "Something went wrong on my end - but your answers are saved, so you "
+            "won't have to go through that again. Just say 'keep going' and I'll "
+            "pick up where I left off."
+        )
+    except Exception:
+        return generic
+
+
 async def _process_inbound(db: AsyncSession, from_number: str, body: str, media: list) -> None:
     """Provider-agnostic inbound SMS handling: keywords, sender resolution,
     consent recording, family welcome, and the AI conversation. Both the
@@ -335,10 +372,7 @@ async def _process_inbound(db: AsyncSession, from_number: str, body: str, media:
         # below is identical for every failure, so without this the only trace
         # of what actually broke lives in a log nobody is watching.
         await usage_service.record_error("sms_reply", e, actor=from_number)
-        await sms_service.send_sms(
-            to=from_number,
-            body="Something went wrong on my end. Please try again in a moment.",
-        )
+        await sms_service.send_sms(to=from_number, body=await _failure_reply(db, from_number))
 
 
 @router.post("/webhook/sms")
