@@ -93,6 +93,33 @@ async def health_test_send(secret: str = "", to: str = "") -> dict:
         return {"error": f"{type(e).__name__}: {e}", "url": url}
 
 
+@app.get("/health/test-flights", include_in_schema=False)
+async def health_test_flights(secret: str = "", origin: str = "BNA", destination: str = "ORF") -> dict:
+    """Run a real Duffel search and report what came back — confirms the token
+    works and fares are reachable. Secret-gated."""
+    from datetime import date, timedelta
+    from app.services import duffel_service
+
+    if not settings.signalhouse_webhook_secret or secret != settings.signalhouse_webhook_secret:
+        return {"error": "bad secret"}
+    if not settings.duffel_access_token:
+        return {"error": "DUFFEL_ACCESS_TOKEN is not set — flight search will silently return nothing"}
+    depart = (date.today() + timedelta(days=30)).isoformat()
+    try:
+        offers = await duffel_service.search_flights(
+            origin=origin.upper(), destination=destination.upper(), depart_date=depart, max_results=3
+        )
+        return {
+            "route": f"{origin.upper()} to {destination.upper()}",
+            "depart_date": depart,
+            "offers_returned": len(offers),
+            "sample": offers[:2],
+            "verdict": "working" if offers else "token set but no offers returned - check Duffel account/live-mode",
+        }
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {e}"}
+
+
 @app.get("/health/config", include_in_schema=False)
 async def health_config(secret: str = "") -> dict:
     """Deployment diagnostics: which settings are configured, never their
@@ -118,6 +145,12 @@ async def health_config(secret: str = "") -> dict:
             "test_number": last4(settings.cordia_test_phone_number),
         },
         "anthropic_key_set": bool(settings.anthropic_api_key),
+        "flights": {
+            "search_enabled": settings.enable_flight_search,
+            "booking_enabled": settings.enable_flight_booking,
+            "duffel_token_set": bool(settings.duffel_access_token),
+            "monitor_interval_minutes": settings.flight_monitor_interval_minutes,
+        },
         "public_base_url": settings.public_base_url,
         "debug": settings.debug,
     }
