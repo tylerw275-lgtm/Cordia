@@ -43,7 +43,9 @@ class Settings(BaseSettings):
     # Email (independent of Crown Bakeries — dedicated assistant identity)
     enable_email: bool = True
     email_provider: str = "gmail"  # "gmail" (free, SMTP+IMAP) or "resend"
-    email_from_name: str = "Cordia"
+    # Display name on outgoing mail. "Cord" so a recipient sees the assistant,
+    # not a message that appears to come from Cordia herself.
+    email_from_name: str = "Cord"
     # Gmail provider (free): a dedicated Gmail + an App Password (requires 2FA)
     email_address: str = ""  # e.g. cordiaassistant@gmail.com — also the IMAP inbox
     email_app_password: str = ""
