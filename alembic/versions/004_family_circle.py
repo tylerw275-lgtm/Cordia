@@ -48,7 +48,7 @@ def upgrade() -> None:
     )
     op.create_index("ix_family_inputs_surfaced", "family_inputs", ["surfaced"])
 
-    # Asks FROM Cordia TO family (e.g. "source gift ideas for Bea").
+    # Asks FROM Cordia TO family (e.g. "source gift ideas for a grandchild").
     # Surfaced to the relevant family member the next time they text in.
     op.create_table(
         "family_requests",

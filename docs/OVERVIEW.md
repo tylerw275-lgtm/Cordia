@@ -60,17 +60,17 @@ SMS program name remains "Cordia AI by AI-Gen Partners" for compliance.)
   until it's tested end-to-end** (see §7).
 
 **Outbound communication (draft → approve → send)** *(feature-flagged, see §7)*
-- Cordia can say "tell everyone on the St. Thomas trip we leave Friday" — Cord drafts a
+- Cordia can say "tell everyone on the trip we leave Friday" — Cord drafts a
   **personalized message per person/family**, shows her the drafts, and sends **only after
   she approves**. SMS goes only to opted-in numbers; everyone else gets email.
 - A secure **contact book**: Cord asks once for a missing email/phone, saves it, and never
   reveals stored contact details to anyone (lookups return only "on file: yes/no").
 
 **Inbound capture & the Naples house**
-- Contacts Cordia marks trusted (e.g. Kristen sending the school calendar) get their
+- Contacts Cordia marks trusted (e.g. a relative sending the school calendar) get their
   emails captured: every date saved as a family event, a one-line summary texted to
   Cordia — and third-party mail is treated as information, never instructions.
-- "What's happening for the kids in Norfolk?" lists those events and offers flights
+- "What's happening for the kids in <city>?" lists those events and offers flights
   around the best dates.
 - The **Naples, FL house inbox** is monitored separately: each property email is
   summarized to Cordia by text, with replies drafted for her approval.
@@ -127,21 +127,29 @@ at cordia.aigenpartners.com; the opt-in page carries the consent form itself.
 
 **Stack**
 - Python + **FastAPI**; **PostgreSQL** via async SQLAlchemy; **Alembic** migrations
-  (through `005_flight_bookings`); **APScheduler** for recurring jobs.
+  (through `008_widen_conversation_key`); **APScheduler** for recurring jobs, on an
+  explicit `SCHEDULER_TIMEZONE`.
 - **SMS:** Signal House (10DLC campaign approved). Inbound webhook
-  `POST /webhook/signalhouse` (shared-secret auth); outbound via their REST API.
-  Provider is swappable via `SMS_PROVIDER` (`app/services/sms_service.py`); the Twilio
-  driver remains as a fallback. Webhooks acknowledge immediately and process in the
-  background, with duplicate-delivery suppression.
+  `POST /webhook/signalhouse` (shared-secret auth, constant-time compare); outbound via
+  their REST API, and every send checks the opt-out list. Provider is swappable via
+  `SMS_PROVIDER` (`app/services/sms_service.py`); the Twilio driver remains as a
+  fallback and refuses to run unverified. Webhooks acknowledge immediately and process
+  in the background, with duplicate-delivery suppression.
   Sender allow-list = Cordia + a test number; family numbers resolved via the DB.
 - **Email:** two-way. Gmail (IMAP poll every ~120s + SMTP send) or Resend (inbound
   webhook + API send). See `app/services/email_inbound.py`, `app/scheduler/jobs/email_poll.py`.
 - **AI:** Anthropic Claude (`claude-sonnet-4-6`). Per-conversation history, proactive
   memory injection, agentic tool loop (≤10 steps), prompt caching, image/vision support.
+  The family roster is injected into every owner prompt, so Cord never has to call a
+  tool to know who the family is.
   Model-adaptive prompting profiles (`app/prompts/prompt_profiles.py`) pick thinking/effort
   params and token budgets per model; deep-work asks get an 8K budget vs 2K conversational.
   Separate, **restricted** system prompt + toolset for family-circle members
   (`sender_role="family"`).
+- **Access control:** the data APIs (`/api/v1/*`, `/health/config`, `/health/data`) are
+  gated on `ADMIN_API_SECRET` (`X-Admin-Secret` header or `?secret=`) and fail closed
+  when it's unset. Webhooks keep their own verification; `/health` and the compliance
+  pages stay public. The OpenAPI schema and `/docs` are disabled.
 - **Flights:** Duffel API (`search_flights`, `get_offer`, `create_link_session`,
   `get_order`); booking webhook `POST /webhook/duffel` (HMAC-verified) + `/booking/*`
   landing pages.
@@ -171,6 +179,10 @@ OutboundMessages (draft/approve/send queue) — migration `006`.
 - `app/tools/` (+ `registry.py`) — every capability the AI can call.
 - `app/scheduler/` — the proactive jobs.
 - `app/api/compliance.py` — consent / privacy / terms / opt-in pages.
+- `app/data/family_seed_loader.py` + `app/services/family_seed.py` — parse the roster
+  from `FAMILY_SEED_JSON` and load it idempotently on boot. The roster itself is
+  configuration, never source: a malformed document seeds nothing and logs the failing
+  field path (never the value), and an unset one with an empty database logs an ERROR.
 - `app/api/duffel_webhooks.py` — booking confirmations.
 
 ---
@@ -181,12 +193,17 @@ OutboundMessages (draft/approve/send queue) — migration `006`.
    (brand AI-Gen Partners / Marq LLC); program number **+1 (629) 225-9067** is live.
 2. ~~**A live phone number**~~ — **DONE.**
 3. **Production secrets set in Railway:** Signal House API key + webhook secret,
-   Anthropic API key, Duffel token, database URL, and (for email) the Gmail address +
-   app password or Resend key. *(All set — verified live.)*
+   Anthropic API key, Duffel token, database URL, plus two that are now **required**:
+   `ADMIN_API_SECRET` (the data APIs deny every request without it) and
+   `FAMILY_SEED_JSON` (the family roster — deliberately not in the repo). And, for
+   email, the Gmail address + app password or Resend key.
 4. **End-to-end tests on the real number/inbox:** inbound text and email → AI reply;
    STOP/START/HELP; photo message; web consent form; a family-member enrollment.
-5. **Load Cordia's family data** (members, birthdays, kids) so the proactive features
-   have real data to act on.
+5. **Set `FAMILY_SEED_JSON` in Railway** (the family roster as JSON — it is
+   deliberately not in the repo). Then loading is automatic. The roster (members, birthdays,
+   kids) loads on every boot from the `FAMILY_SEED_JSON` variable; the load is idempotent,
+   so a redeploy or a database reset self-heals. Check it with
+   `GET /health/data`. Set `SEED_FAMILY_ON_STARTUP=false` to turn it off.
 6. **Optional, when ready:** turn on `enable_flight_booking` and complete a Duffel
    test-mode booking before exposing it to Cordia.
 

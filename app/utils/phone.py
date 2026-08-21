@@ -4,7 +4,7 @@ import re
 def normalize_phone(phone: str | None) -> str:
     """Reduce a phone number to its last 10 digits for comparison.
 
-    Handles formats like '+16158539483', '6158539483', '(615) 853-9483'.
+    Handles formats like '+15555550123', '5555550123', '(555) 555-0123'.
     """
     if not phone:
         return ""
