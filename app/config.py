@@ -53,7 +53,10 @@ class Settings(BaseSettings):
     # Resend provider (optional upgrade to a branded domain)
     email_api_key: str = ""
     email_from: str = ""  # overrides the derived "Name <address>" if set
-    email_inbound_secret: str = ""  # optional shared secret for the inbound webhook
+    email_inbound_secret: str = ""  # shared secret in the webhook URL (fallback auth)
+    # Resend's webhook signing secret (whsec_...). Preferred over the URL
+    # secret: it proves the request came from Resend and was not altered.
+    email_webhook_signing_secret: str = ""
     owner_email: str = ""  # Cordia's destination inbox
 
     # The family roster itself, as JSON. Deliberately NOT in the repo: it holds
