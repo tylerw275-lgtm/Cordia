@@ -109,16 +109,23 @@ def _fence_capture(name: str, subject: str, body: str) -> str:
     )
 
 
-async def process_inbound_email(db: AsyncSession, sender: str, subject: str, body: str) -> bool:
+async def process_inbound_email(db: AsyncSession, sender: str, subject: str, body: str) -> str:
+    """Returns a short status describing what happened, so callers (and the
+    provider's webhook log) can see why a message produced no reply."""
     sender = (sender or "").strip().lower()
     body = strip_quoted(body or "")
-    if not sender or not body:
-        return False
+    if not sender:
+        return "ignored_no_sender"
+    if not body:
+        return "ignored_empty_body"
 
     role, member, conv_key = await _resolve_sender(db, sender)
     if role == "unknown":
-        logger.warning(f"Inbound email from unknown sender {_mask(sender)} — ignored")
-        return False
+        logger.warning(
+            f"Inbound email from unknown sender {_mask(sender)} — ignored. "
+            "Set OWNER_EMAIL to this address if it is Cordia's."
+        )
+        return "ignored_unknown_sender"
 
     logger.info(f"Inbound email from {_mask(sender)} (role={role}): {subject[:50]}")
     conversation = await claude_service.get_or_create_conversation(db, conv_key)
@@ -140,11 +147,11 @@ async def process_inbound_email(db: AsyncSession, sender: str, subject: str, bod
             await email_service.send_email(
                 to=settings.owner_email, subject=f"FYI: email from {member.name}", body_markdown=notify
             )
-        return True
+        return "captured_trusted_contact"
 
     response_text = await claude_service.chat(
         db, conversation.id, body, sender_role=role, sender_member=member, channel="email"
     )
     reply_subject = subject if subject.lower().startswith("re:") else f"Re: {subject or 'your note'}"
     await email_service.send_email(to=sender, subject=reply_subject, body_markdown=response_text)
-    return True
+    return f"replied_as_{role}"

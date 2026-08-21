@@ -8,6 +8,7 @@ import logging
 import time
 
 from fastapi import APIRouter, Depends, Request, Response
+from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
@@ -110,9 +111,13 @@ async def receive_email(request: Request, db: AsyncSession = Depends(get_db)) ->
     subject = _first(payload, "subject", "Subject")
     body = _first(payload, "text", "plain", "body-plain", "stripped-text", "TextBody", "body")
 
+    # The status is echoed back in the 200 body so it appears in the provider's
+    # webhook log — "ignored_unknown_sender" there is far easier to act on than
+    # silence plus a server log nobody is watching.
     try:
-        await email_inbound.process_inbound_email(db, sender, subject, body)
+        status = await email_inbound.process_inbound_email(db, sender, subject, body)
     except Exception as e:
         logger.error(f"Error processing inbound email: {e}", exc_info=True)
+        status = f"error:{type(e).__name__}"
 
-    return Response(status_code=200)
+    return JSONResponse(status_code=200, content={"status": status})

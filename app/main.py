@@ -255,6 +255,10 @@ async def health_config() -> dict:
             "app_password_set": bool(settings.email_app_password),
             "resend_key_set": bool(settings.email_api_key),
             "owner_inbox_set": bool(settings.owner_email),
+            "owner_inbox": (
+                settings.owner_email[0] + "****@" + settings.owner_email.partition("@")[2]
+                if "@" in (settings.owner_email or "") else "(not set)"
+            ),
             "inbound_polling": bool(
                 settings.enable_email and settings.email_provider == "gmail"
                 and settings.email_address and settings.email_app_password
