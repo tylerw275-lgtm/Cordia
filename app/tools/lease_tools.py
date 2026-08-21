@@ -15,7 +15,8 @@ TOOL_SCHEMAS = [
         "name": "save_lease",
         "description": (
             "Save a lease Cordia sent you (photo, PDF text, or pasted text) so it can be "
-            "reviewed, stored and reminded on. Call this FIRST when she shares a lease — "
+            "reviewed, stored and reminded on — normally a lease for space in a building "
+            "she OWNS, with a tenant renting from her. Call this FIRST when she shares a lease — "
             "flag_lease_clauses and the renewal reminder both need the id it returns. Fill in "
             "whatever the document shows; ask her only for a date you genuinely cannot find."
         ),
@@ -25,8 +26,13 @@ TOOL_SCHEMAS = [
                 "property_address": {"type": "string", "description": "The leased property's address"},
                 "lease_start": {"type": "string", "description": "YYYY-MM-DD"},
                 "lease_end": {"type": "string", "description": "YYYY-MM-DD"},
-                "tenant_name": {"type": "string"},
-                "landlord_name": {"type": "string"},
+                "her_role": {
+                    "type": "string",
+                    "enum": ["landlord", "tenant"],
+                    "description": "Which side Cordia is on. She OWNS commercial property and leases space to tenants, so this is almost always 'landlord'. Only use 'tenant' if she is the one renting space.",
+                },
+                "tenant_name": {"type": "string", "description": "Who is renting the space from her"},
+                "landlord_name": {"type": "string", "description": "The owner — usually Cordia or one of her entities"},
                 "monthly_rent": {"type": "number", "description": "Monthly rent amount"},
                 "renewal_notice_days": {"type": "integer", "description": "Days of notice required before renewal/termination (default 60)"},
                 "raw_text": {"type": "string", "description": "The lease text you read, for the record"},
@@ -38,9 +44,10 @@ TOOL_SCHEMAS = [
     {
         "name": "list_leases",
         "description": (
-            "List the leases on file with their end dates, rent, and how long until the "
-            "renewal-notice deadline. Use when Cordia asks about her properties, leases, or "
-            "what's coming up — and before saving a lease that may already be stored."
+            "List the leases on file: which tenant occupies which property, the rent they pay, "
+            "when each lease expires and how long until she must act. Use when Cordia asks "
+            "about her buildings, tenants, rent roll, or what's coming up — and before saving "
+            "a lease that may already be stored."
         ),
         "input_schema": {"type": "object", "properties": {}},
     },
@@ -149,6 +156,22 @@ async def flag_clauses_handler(db: AsyncSession, lease_id: str, clauses: list[di
     }
 
 
+def _reminder_text(lease, notice_days: int, her_role: str) -> str:
+    """Owner and tenant need to hear different things at the same deadline."""
+    if her_role == "tenant":
+        return (
+            f"Heads up: your lease at {lease.property_address} ends "
+            f"{lease.lease_end.isoformat()} and notice is due {notice_days} days before. "
+            "Want to review renewal options?"
+        )
+    who = lease.tenant_name or "your tenant"
+    return (
+        f"Heads up: {who}'s lease at {lease.property_address} expires "
+        f"{lease.lease_end.isoformat()} — {notice_days} days out from the notice date. "
+        "Want to plan the renewal terms, or start lining up a replacement tenant?"
+    )
+
+
 async def _find_lease(db: AsyncSession, address: str):
     from sqlalchemy import func
     from app.models.real_estate import Lease
@@ -180,6 +203,7 @@ async def save_lease_handler(db: AsyncSession, **kw) -> dict:
         lease_start=date.fromisoformat(kw["lease_start"]),
         lease_end=date.fromisoformat(kw["lease_end"]),
         tenant_name=kw.get("tenant_name"),
+        status="active",
         landlord_name=kw.get("landlord_name"),
         monthly_rent=kw.get("monthly_rent"),
         renewal_notice_days=notice_days,
@@ -196,11 +220,7 @@ async def save_lease_handler(db: AsyncSession, **kw) -> dict:
             db.add(LeaseReminder(
                 lease_id=lease.id,
                 remind_at=remind_at,
-                message=(
-                    f"Heads up: the lease at {lease.property_address} ends "
-                    f"{lease.lease_end.isoformat()}, and notice is due {notice_days} days "
-                    "before. Want to review renewal options?"
-                ),
+                message=_reminder_text(lease, notice_days, kw.get("her_role", "landlord")),
             ))
             reminder_set = True
 
@@ -233,6 +253,7 @@ async def list_leases_handler(db: AsyncSession, **kw) -> dict:
         deadline = l.lease_end - timedelta(days=l.renewal_notice_days or 60)
         out.append({
             "property_address": l.property_address,
+            "tenant": l.tenant_name,
             "lease_end": l.lease_end.isoformat(),
             "monthly_rent": float(l.monthly_rent) if l.monthly_rent else None,
             "status": l.status,
