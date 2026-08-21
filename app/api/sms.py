@@ -140,15 +140,81 @@ def _is_duplicate(message_id: str | None) -> bool:
     return False
 
 
+# One conversation at a time. Without this every inbound webhook starts its own
+# turn immediately, so three texts sent in quick succession become three turns
+# running in parallel — each loading history before the others had written to it.
+# Cordia saw exactly that: she asked, clarified, then corrected herself, and got
+# two separate answers racing each other, one asking questions the other had
+# already answered.
+_INBOX: "dict[str, list[tuple[str, list]]]" = {}
+_INBOX_LOCKS: "dict[str, asyncio.Lock]" = {}
+
+
+def _conversation_lock(key: str) -> asyncio.Lock:
+    lock = _INBOX_LOCKS.get(key)
+    if lock is None:
+        lock = _INBOX_LOCKS[key] = asyncio.Lock()
+    return lock
+
+
+_MAX_TRACKED_CONVERSATIONS = 500
+
+
+def _sweep_locks() -> None:
+    if len(_INBOX_LOCKS) <= _MAX_TRACKED_CONVERSATIONS:
+        return
+    for key, lock in list(_INBOX_LOCKS.items()):
+        if not lock.locked() and not _INBOX.get(key):
+            _INBOX_LOCKS.pop(key, None)
+
+
+def _merge(batch: list) -> tuple[str, list]:
+    """Fold several texts into the single message a person actually meant.
+
+    "What to pack though. Clothes" followed by "It's a second home" is one
+    thought split across two taps, not two questions. Answering them separately
+    produces two replies that talk past each other.
+    """
+    body = "\n".join(b for b, _ in batch if b and b.strip())
+    media = [m for _, ms in batch for m in (ms or [])]
+    return body, media
+
+
 async def _process_inbound_bg(from_number: str, body: str, media: list) -> None:
     """Background entry point — opens its own DB session (the request-scoped
-    one is closed once the webhook responds) and never raises into the app."""
+    one is closed once the webhook responds) and never raises into the app.
+
+    Queues the message and takes the conversation's turn. Whoever holds the lock
+    drains everything waiting, so anything that arrives mid-turn joins the next
+    one rather than starting a competing turn of its own. Deliberately no early
+    "someone else is working" return: the gap between that check and acquiring
+    the lock is exactly where a message goes missing.
+    """
     from app.database import get_db_session
-    try:
-        async with get_db_session() as db:
-            await _process_inbound(db, from_number, body, media)
-    except Exception as e:
-        logger.error(f"Background inbound processing failed: {e}", exc_info=True)
+
+    _INBOX.setdefault(from_number, []).append((body, media))
+    async with _conversation_lock(from_number):
+        try:
+            while True:
+                batch = _INBOX.pop(from_number, [])
+                if not batch:
+                    break
+                merged_body, merged_media = _merge(batch)
+                if len(batch) > 1:
+                    logger.info(
+                        f"Folding {len(batch)} messages from {from_number} into one turn"
+                    )
+                async with get_db_session() as db:
+                    await _process_inbound(db, from_number, merged_body, merged_media)
+        except Exception as e:
+            logger.error(f"Background inbound processing failed: {e}", exc_info=True)
+        finally:
+            _INBOX.pop(from_number, None)
+
+    # Keyed by phone number and otherwise immortal. Dropping a lock only once
+    # nobody holds or wants it: reaching into its private waiter list to decide
+    # would break on any asyncio change, and a bounded sweep is enough.
+    _sweep_locks()
 
 
 # If a reply is still being composed after this many seconds, send a short
