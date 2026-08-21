@@ -131,11 +131,13 @@ async def test_summary_respects_the_period(db):
     db.add(old)
     await db.commit()
 
+    # usage_cost, not total_cost: a period summary also carries the fixed
+    # monthly charges, and this test is about the date filter.
     this_month = await usage_service.summary(
         db, since=datetime.now(timezone.utc) - timedelta(days=30)
     )
-    assert this_month["total_cost"] == pytest.approx(1.00)
-    assert (await usage_service.summary(db))["total_cost"] == pytest.approx(100.00)
+    assert this_month["usage_cost"] == pytest.approx(1.00)
+    assert (await usage_service.summary(db))["usage_cost"] == pytest.approx(100.00)
 
 
 @pytest.mark.asyncio
@@ -245,3 +247,114 @@ async def test_sub_cent_totals_are_not_displayed_as_zero(db, client, mocker):
     html = (await client.get("/health/dashboard")).text
 
     assert "$0.0004" in html
+
+
+# --- MMS is not SMS --------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_a_photo_bills_as_one_mms_not_as_segments(db):
+    """MMS is priced per message at ~7x a text. Billing a photo with a long
+    caption as five segments would be wrong in both directions at once."""
+    await usage_service.record_sms(
+        "+16155551234", "here is the lease " * 40, outbound=False, is_mms=True
+    )
+
+    row = (await db.execute(select(UsageEvent))).scalars().one()
+    assert row.event_type == "mms_in"
+    assert row.quantity == 1
+    assert float(row.cost_usd) == pytest.approx(settings.mms_cost_inbound)
+
+
+@pytest.mark.asyncio
+async def test_a_long_text_still_bills_per_segment(db):
+    await usage_service.record_sms("+16155551234", "a" * 400, outbound=True)
+
+    row = (await db.execute(select(UsageEvent))).scalars().one()
+    assert row.event_type == "sms_out"
+    assert row.quantity == 3
+    assert float(row.cost_usd) == pytest.approx(3 * settings.sms_cost_outbound)
+
+
+@pytest.mark.asyncio
+async def test_the_two_directions_are_priced_differently(db):
+    """Signal House charges a platform fee on the way out and none on the way
+    in, so symmetric rates would overstate every inbound message."""
+    assert settings.sms_cost_outbound != settings.sms_cost_inbound
+
+    await usage_service.record_sms("+1615", "hi", outbound=True)
+    await usage_service.record_sms("+1615", "hi", outbound=False)
+
+    costs = {
+        r.event_type: float(r.cost_usd)
+        for r in (await db.execute(select(UsageEvent))).scalars()
+    }
+    assert costs["sms_out"] == pytest.approx(settings.sms_cost_outbound)
+    assert costs["sms_in"] == pytest.approx(settings.sms_cost_inbound)
+
+
+@pytest.mark.asyncio
+async def test_an_inbound_photo_is_recorded_as_mms_end_to_end(db, client, mocker):
+    """The media list reaches the ledger. Without it every photo Cordia sends
+    is logged at the text rate."""
+    mocker.patch("app.api.sms.twilio_service.verify_twilio_request")
+    mocker.patch("app.api.sms.twilio_service.fetch_image_blocks", return_value=[])
+    mocker.patch("app.services.sms_service.send_sms", new=mocker.AsyncMock())
+    mocker.patch("app.services.claude_service.chat", return_value="Read it.")
+    mocker.patch.object(settings, "cordia_test_phone_number", "+15551112222")
+
+    await client.post("/webhook/sms", data={
+        "From": "+15551112222", "Body": "here's the lease", "MessageSid": "SM-mms",
+        "NumMedia": "1", "MediaUrl0": "https://x/img0", "MediaContentType0": "image/jpeg",
+    })
+
+    types = [r.event_type for r in (await db.execute(select(UsageEvent))).scalars()]
+    assert "mms_in" in types
+    assert "sms_in" not in types
+
+
+# --- fixed monthly cost ----------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_month_total_includes_the_fixed_charges(db):
+    """A month total that ignores the number rental and campaign fee understates
+    the real bill in the direction that matters."""
+    await usage_service.record(db, "sms_out", actor="+1615", cost_usd=0.50)
+
+    month = await usage_service.summary(
+        db, since=datetime.now(timezone.utc) - timedelta(days=30)
+    )
+
+    assert month["usage_cost"] == pytest.approx(0.50)
+    assert month["fixed_cost"] == pytest.approx(usage_service.fixed_monthly_cost())
+    assert month["total_cost"] == pytest.approx(0.50 + usage_service.fixed_monthly_cost())
+
+
+@pytest.mark.asyncio
+async def test_all_time_reports_usage_only(db):
+    """There is no meaningful single fixed figure across all time, so adding one
+    month of it to an all-time total would be arbitrary."""
+    await usage_service.record(db, "sms_out", actor="+1615", cost_usd=0.50)
+
+    all_time = await usage_service.summary(db)
+    assert all_time["fixed_cost"] == 0
+    assert all_time["total_cost"] == pytest.approx(0.50)
+
+
+@pytest.mark.asyncio
+async def test_setup_cost_is_shown_but_kept_out_of_the_running_total(db, client, mocker):
+    from app.api import dashboard as d
+
+    mocker.patch.object(settings, "dashboard_password", "pw")
+    mocker.patch.object(settings, "setup_cost_to_date", 116.50)
+
+    client.cookies.set(d._COOKIE, d._issue_session())
+    html = (await client.get("/health/dashboard")).text
+
+    assert "$116.50" in html
+    assert "not in the totals above" in html
+    # The month total is the fixed charges only — no usage recorded here.
+    assert _money_in(html, usage_service.fixed_monthly_cost())
+
+
+def _money_in(html: str, value: float) -> bool:
+    return f"${value:,.2f}" in html

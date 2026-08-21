@@ -361,6 +361,8 @@ async def dashboard(request: Request, secret: str = "") -> HTMLResponse:
     _USAGE_LABELS = [
         ("sms_out", "Texts sent", "segments"),
         ("sms_in", "Texts received", "segments"),
+        ("mms_out", "Photos sent", "messages"),
+        ("mms_in", "Photos received", "messages"),
         ("email_out", "Emails sent", "emails"),
         ("email_in", "Emails received", "emails"),
         ("ai_turn", "AI requests", "requests"),
@@ -393,12 +395,24 @@ async def dashboard(request: Request, secret: str = "") -> HTMLResponse:
         )
         tokens = (f'{month["input_tokens"]:,} in / {month["output_tokens"]:,} out'
                   if month["input_tokens"] or month["output_tokens"] else "—")
+        setup = float(settings.setup_cost_to_date or 0)
+        setup_row = (
+            f'<div class="row"><span class="label">Spent getting set up '
+            f'<span style="color:#6b7280">(one-off, not in the totals above)</span></span>'
+            f'<span class="val">{_money(setup)}</span></div>' if setup else ""
+        )
         return f"""<div class="card">
 <h2>What it costs</h2>
 <div class="row"><span class="label">This month so far</span>
 <span class="val" style="font-size:1.35rem">{_money(month["total_cost"])}</span></div>
-<div class="row"><span class="label">All time</span>
+<div class="row"><span class="label">&nbsp;&nbsp;of that, messages &amp; AI</span>
+<span class="val">{_money(month["usage_cost"])}</span></div>
+<div class="row"><span class="label">&nbsp;&nbsp;of that, number &amp; campaign
+<span style="color:#6b7280">(charged monthly either way)</span></span>
+<span class="val">{_money(month["fixed_cost"])}</span></div>
+<div class="row"><span class="label">Messages &amp; AI, all time</span>
 <span class="val">{_money(all_time["total_cost"])}</span></div>
+{setup_row}
 <div class="row"><span class="label">AI tokens this month</span>
 <span class="val">{tokens}</span></div>
 {table}
@@ -406,15 +420,21 @@ async def dashboard(request: Request, secret: str = "") -> HTMLResponse:
 {people}
 <div class="note"><strong>How these are worked out.</strong> Texts bill per
 <em>segment</em>, not per message — a long reply is several segments, and one
-emoji drops the limit from 160 characters to 70. AI cost uses Anthropic's list
-prices for {settings.claude_model}, with cached input at a tenth of the normal
-rate. Web search is {_money(settings.web_search_cost)} per search. Texts are
-{_money(settings.sms_cost_outbound)} per segment and email
-{_money(settings.email_cost_outbound)} each &mdash; those two are estimates
-until you set your real contracted rates in Railway
-(<code>SMS_COST_OUTBOUND</code>, <code>EMAIL_COST_OUTBOUND</code>). Each charge
-is stored at the rate in force when it happened, so changing a rate never
-rewrites past months.</div>
+emoji drops the limit from 160 characters to 70. Signal House charges a platform
+fee plus a carrier passthrough, and the two directions differ: sending is
+{_money(settings.sms_cost_outbound)} a segment, receiving
+{_money(settings.sms_cost_inbound)}. A <strong>photo is an MMS</strong>, priced
+per message rather than per segment, at {_money(settings.mms_cost_outbound)} —
+about seven times a text. AI cost uses Anthropic's list prices for
+{settings.claude_model}, with cached input at a tenth of the normal rate, and web
+search is {_money(settings.web_search_cost)} per search. The number renews at
+{_money(settings.monthly_number_cost)} a month and the campaign costs
+{_money(settings.monthly_campaign_cost)}; both are charged whether or not anyone
+sends anything. Rates live in Railway (<code>SMS_COST_OUTBOUND</code>,
+<code>MMS_COST_OUTBOUND</code>, <code>MONTHLY_CAMPAIGN_COST</code>,
+<code>SETUP_COST_TO_DATE</code>, and so on). Each charge is stored at the rate in
+force when it happened, so changing a rate never rewrites past months, and
+nothing before this ledger existed is counted.</div>
 </div>"""
 
     usage_section = _usage_card(usage_month, usage_all)

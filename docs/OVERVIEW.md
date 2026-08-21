@@ -100,10 +100,14 @@ SMS program name remains "Cordia AI by AI-Gen Partners" for compliance.)
   never passed off as "nothing found."
 
 **Cost tracking**
-- Every text (billed per *segment*, not per message), email, AI request and web
-  search is recorded with what it cost, and the dashboard shows this month, all
-  time, and a per-person breakdown. Rates are configurable; the page always states
-  the ones it used.
+- Every text (billed per *segment*), photo (MMS — priced per message at ~7x a text),
+  email, AI request and web search is recorded with what it cost. The dashboard shows
+  this month split into usage vs. the fixed number/campaign fees, all time, a
+  per-person breakdown, and one-off 10DLC setup kept out of the running total.
+- Rates are Signal House's real account pricing (platform fee + carrier passthrough,
+  asymmetric by direction) and are configurable; the page always states the ones it
+  used. Each charge is stored at the rate in force when it happened, so changing a
+  rate never rewrites a past month.
 
 **Lease / document review**
 - Analyzes a lease, flags clauses by severity (standard / flag / urgent), stores a

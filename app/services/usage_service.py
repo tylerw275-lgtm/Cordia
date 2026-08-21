@@ -138,7 +138,22 @@ async def record_standalone(event_type: str, **kw) -> None:
         logger.warning(f"Could not open a session to record {event_type}: {e}")
 
 
-async def record_sms(to_or_from: str, body: str, outbound: bool) -> None:
+async def record_sms(to_or_from: str, body: str, outbound: bool, is_mms: bool = False) -> None:
+    """Bill one message.
+
+    MMS is priced per *message*, not per segment, and at roughly 7x the SMS
+    rate — so a photo with a long caption costs one MMS, not five segments.
+    Applying the segment maths to it would be wrong twice over.
+    """
+    if is_mms:
+        rate = settings.mms_cost_outbound if outbound else settings.mms_cost_inbound
+        await record_standalone(
+            "mms_out" if outbound else "mms_in",
+            actor=to_or_from, quantity=1, cost_usd=rate,
+            details={"chars": len(body or "")},
+        )
+        return
+
     segments = sms_segments(body)
     rate = settings.sms_cost_outbound if outbound else settings.sms_cost_inbound
     await record_standalone(
@@ -146,6 +161,11 @@ async def record_sms(to_or_from: str, body: str, outbound: bool) -> None:
         actor=to_or_from, quantity=segments, cost_usd=segments * rate,
         details={"segments": segments, "chars": len(body or "")},
     )
+
+
+def fixed_monthly_cost() -> float:
+    """Charges that accrue whether or not a single message is sent."""
+    return settings.monthly_number_cost + settings.monthly_campaign_cost
 
 
 async def record_email(address: str, outbound: bool) -> None:
@@ -189,6 +209,12 @@ async def summary(db: AsyncSession, since: datetime | None = None) -> dict:
     )).first()
 
     types = {t: {"quantity": int(q or 0), "cost": float(c or 0)} for t, q, c in by_type}
+    usage_cost = sum(v["cost"] for v in types.values())
+    # The number renewal and campaign fee are charged once a month regardless of
+    # traffic. `since` is only ever the start of a month, so a period query is a
+    # single month's worth; an all-time query has no meaningful fixed component
+    # to state, so it reports usage only and says so on the card.
+    fixed = fixed_monthly_cost() if since else 0.0
     return {
         "by_type": types,
         "by_actor": [
@@ -196,5 +222,7 @@ async def summary(db: AsyncSession, since: datetime | None = None) -> dict:
         ],
         "input_tokens": int(tokens[0] or 0),
         "output_tokens": int(tokens[1] or 0),
-        "total_cost": sum(v["cost"] for v in types.values()),
+        "usage_cost": usage_cost,
+        "fixed_cost": fixed,
+        "total_cost": usage_cost + fixed,
     }

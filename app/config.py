@@ -86,12 +86,31 @@ class Settings(BaseSettings):
     # Cost tracking rates, USD. Defaults are typical US list prices; set them to
     # the real contracted rates so the dashboard reports actual spend rather than
     # an estimate. The dashboard states which rates it used.
-    sms_cost_outbound: float = 0.0079   # per segment, not per message
-    sms_cost_inbound: float = 0.0079
+    # Signal House bills a platform fee plus a carrier passthrough, and the two
+    # directions are not symmetric — inbound carries no platform fee at all.
+    #   SMS out  = 0.0065 platform + 0.0040 carrier   (per SEGMENT)
+    #   SMS in   = 0      platform + 0.0040 carrier   (per SEGMENT)
+    #   MMS      = 0.02   platform + 0.01   carrier   (per MESSAGE, either way)
+    # Carrier passthrough varies a little by network — outbound 0.0100 (AT&T,
+    # Google Voice) to 0.0115 (US Cellular), inbound 0 (Verizon) to 0.0045
+    # (interop) — so these are the default-carrier figures.
+    sms_cost_outbound: float = 0.0105    # per segment
+    sms_cost_inbound: float = 0.0040     # per segment
+    mms_cost_outbound: float = 0.03      # per message — MMS has no segments
+    mms_cost_inbound: float = 0.03
     email_cost_outbound: float = 0.0004  # Resend $20/mo ÷ 50k emails
     email_cost_inbound: float = 0.0
     web_search_cost: float = 0.01        # Anthropic: $10 per 1,000 searches
     web_fetch_cost: float = 0.0          # billed as tokens, not per fetch
+
+    # Charges that accrue whether or not anyone sends a thing. Reporting only
+    # per-message cost would understate the real monthly bill.
+    monthly_number_cost: float = 1.00    # local number renewal
+    monthly_campaign_cost: float = 1.50  # 10DLC campaign fee (Low volume standard)
+    # One-time 10DLC setup already paid: brand registration, vetting, campaign
+    # creation, and $15 for each resubmit after a rejection. Shown separately so
+    # sunk cost never inflates a month's running total.
+    setup_cost_to_date: float = 0.0
 
     # Live web research via Anthropic's server-side search/fetch tools. Costs
     # ~$0.01 per search on top of tokens, so the per-turn ceilings are config.

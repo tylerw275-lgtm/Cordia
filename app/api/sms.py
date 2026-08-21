@@ -221,7 +221,10 @@ async def _process_inbound(db: AsyncSession, from_number: str, body: str, media:
 
     logger.info(f"Inbound SMS from {from_number} (role={role}, media={len(media)}): {body[:50]}...")
     from app.services import usage_service
-    await usage_service.record_sms(from_number, body or "", outbound=False)
+    # A photo is an MMS and costs ~7x a text, so the media list decides the rate.
+    await usage_service.record_sms(
+        from_number, body or "", outbound=False, is_mms=bool(media)
+    )
 
     # Download images only now that the sender is authorized (Twilio MMS only)
     images = await twilio_service.fetch_image_blocks(media) if media else []
