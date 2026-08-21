@@ -192,6 +192,33 @@ async def health_test_flights(origin: str = "BNA", destination: str = "ORF") -> 
         return {"error": f"{type(e).__name__}: {e}"}
 
 
+@app.get("/health/test-email", include_in_schema=False, dependencies=_admin)
+async def health_test_email() -> dict:
+    """Send a real email to Cordia's configured inbox and report the outcome.
+    Confirms outbound mail works end to end. Secret-gated."""
+    from app.services import email_service
+
+    if not settings.enable_email:
+        return {"error": "email is disabled (ENABLE_EMAIL=false)"}
+    if not settings.owner_email:
+        return {"error": "OWNER_EMAIL is not set — Cord has no inbox to send reports to"}
+    result = await email_service.send_email(
+        to=settings.owner_email,
+        subject="Cord test email",
+        body_markdown=(
+            "## Cord email test\n\nIf you're reading this, outbound email is working.\n\n"
+            "- Long reports (flight comparisons, lease analyses, event plans) arrive this way\n"
+            "- Replying to this address reaches Cord if inbound polling is on\n"
+        ),
+    )
+    return {
+        "provider": settings.email_provider,
+        "to_owner_inbox": bool(settings.owner_email),
+        "from": email_service.from_address(),
+        "result": result,
+    }
+
+
 @app.get("/health/config", include_in_schema=False, dependencies=[Depends(require_admin)])
 async def health_config() -> dict:
     """Deployment diagnostics: which settings are configured, never their
@@ -221,6 +248,20 @@ async def health_config() -> dict:
             "test_number": last4(settings.cordia_test_phone_number),
         },
         "anthropic_key_set": bool(settings.anthropic_api_key),
+        "email": {
+            "enabled": settings.enable_email,
+            "provider": settings.email_provider,
+            "assistant_mailbox_set": bool(settings.email_address),
+            "app_password_set": bool(settings.email_app_password),
+            "resend_key_set": bool(settings.email_api_key),
+            "owner_inbox_set": bool(settings.owner_email),
+            "inbound_polling": bool(
+                settings.enable_email and settings.email_provider == "gmail"
+                and settings.email_address and settings.email_app_password
+            ),
+            "poll_interval_seconds": settings.email_poll_interval_seconds,
+            "naples_inbox_set": bool(settings.naples_email_address and settings.naples_email_app_password),
+        },
         "flights": {
             "search_enabled": settings.enable_flight_search,
             "booking_enabled": settings.enable_flight_booking,
