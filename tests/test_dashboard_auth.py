@@ -46,3 +46,57 @@ def test_garbage_rejected():
     _with_password("pw")
     for junk in (None, "", "nodot", "..", "abc.def"):
         assert d._session_valid(junk) is False
+
+
+# --- the decision endpoint changes state, so it must be gated too -----------
+
+import pytest
+
+
+@pytest.mark.asyncio
+async def test_consent_decision_requires_a_session(client, db):
+    """Without this gate, anyone who found the URL could approve themselves."""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import text
+
+    from app.services import consent_service
+
+    _with_password("correct horse battery staple")
+    await db.execute(
+        text("INSERT INTO sms_consent (phone, consented_at, method, approval_status) "
+             "VALUES (:p, :ts, 'web_form', 'pending')"),
+        {"p": "+17876765645", "ts": datetime.now(timezone.utc)},
+    )
+    await db.commit()
+
+    r = await client.post("/health/consent-decision",
+                          data={"phone": "+17876765645", "decision": "approved"})
+
+    assert r.status_code == 401
+    assert await consent_service.is_approved(db, "+17876765645") is False
+
+
+@pytest.mark.asyncio
+async def test_consent_decision_with_a_session_applies(client, db):
+    from datetime import datetime, timezone
+
+    from sqlalchemy import text
+
+    from app.services import consent_service
+
+    _with_password("correct horse battery staple")
+    await db.execute(
+        text("INSERT INTO sms_consent (phone, consented_at, method, approval_status) "
+             "VALUES (:p, :ts, 'web_form', 'pending')"),
+        {"p": "+17876765645", "ts": datetime.now(timezone.utc)},
+    )
+    await db.commit()
+
+    client.cookies.set(d._COOKIE, d._issue_session())
+    r = await client.post("/health/consent-decision",
+                          data={"phone": "+17876765645", "decision": "rejected"},
+                          follow_redirects=False)
+
+    assert r.status_code == 303
+    assert await consent_service.status_for(db, "+17876765645") == "rejected"

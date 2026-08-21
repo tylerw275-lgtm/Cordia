@@ -287,7 +287,8 @@ async def ask_family_member_handler(db: AsyncSession, **kw) -> dict:
     digits = normalize_phone(member.phone)
     row = (await db.execute(
         sql_text(
-            "SELECT opted_out_at IS NOT NULL AS opted_out FROM sms_consent "
+            "SELECT opted_out_at IS NOT NULL AS opted_out, approval_status "
+            "FROM sms_consent "
             "WHERE right(regexp_replace(phone, '[^0-9]', '', 'g'), 10) = :digits "
             "AND consented_at IS NOT NULL"
         ),
@@ -295,6 +296,7 @@ async def ask_family_member_handler(db: AsyncSession, **kw) -> dict:
     )).first()
     consented = row is not None and not row.opted_out
     opted_out = row is not None and row.opted_out
+    approval = (row.approval_status if row is not None else None) or "pending"
 
     if opted_out:
         return {"sent": False, "reason": "opted_out",
@@ -307,6 +309,17 @@ async def ask_family_member_handler(db: AsyncSession, **kw) -> dict:
                 "message": (f"{member.name} has not consented to texts, so nothing was sent. "
                             "Offer to give Cordia the consent link to forward from her own "
                             "phone, or to email them instead.")}
+    if approval != "approved":
+        # Consent is on file and valid — the gate here is Cordia's own approval,
+        # a separate decision. Saying "no consent" would be a lie she'd act on.
+        verb = "declined" if approval == "rejected" else "not yet approved"
+        return {"sent": False, "reason": f"approval_{approval}",
+                "consent_on_file": True, "approval_status": approval,
+                "circle_access": member.has_circle_access,
+                "message": (f"{member.name} HAS consented, but their number is {verb} "
+                            "by Cordia, so nothing was sent. Do NOT say they haven't "
+                            "consented. If she wants them let in, say so and call "
+                            "approve_consent_request with their number.")}
     if not member.has_circle_access:
         # They CAN legally be texted; they just aren't set up to contribute yet,
         # which also means their reply would not reach Cord.

@@ -1,7 +1,7 @@
 from typing import Callable
 
 from app.config import settings
-from app.tools import calendar_tools, email_tools, family_circle_tools, family_tools, feature_tools, lease_tools, loyalty_tools, memory_tools
+from app.tools import calendar_tools, consent_tools, email_tools, family_circle_tools, family_tools, feature_tools, lease_tools, loyalty_tools, memory_tools
 
 
 def _roster_schemas() -> list[dict]:
@@ -20,6 +20,9 @@ _BASE_TOOLS: list[dict] = [
     # enable_outbound gate: Cordia can ask who she's allowed to text long
     # before Cord is allowed to send anything.
     *[t for t in _roster_schemas()],
+    # Approving who may reach the assistant. Always on, like the roster view:
+    # the gate has to be operable the moment someone signs the public form.
+    *consent_tools.TOOL_SCHEMAS,
 ]
 
 _BASE_HANDLERS: dict[str, Callable] = {
@@ -37,6 +40,7 @@ _BASE_HANDLERS: dict[str, Callable] = {
     **family_circle_tools.OWNER_EXTRA_HANDLERS,
     **feature_tools.HANDLERS,
     **loyalty_tools.HANDLERS,
+    **consent_tools.HANDLERS,
 }
 
 

@@ -8,6 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
+from app.services import consent_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -249,6 +250,33 @@ Message &amp; data rates may apply. Questions: tyler@aigenpartners.com</p>
 </html>"""
 
 
+# Shown when a submission still needs Cordia's approval. It confirms the consent
+# record honestly (that part IS done) without promising service access, because
+# this program is invitation-only and the form is publicly reachable.
+_CONSENT_PENDING = f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Consent Recorded — Cordia AI</title>
+<style>{_CONSENT_STYLE}</style>
+</head>
+<body>
+<h1>Cordia AI — Consent Recorded</h1>
+<div class="success">
+<p><strong>Thank you — your consent has been recorded.</strong></p>
+<p>Cordia AI is a private, invitation-only assistant, so one more step happens on
+our side: the account holder confirms each new recipient before enrollment is
+completed. You&rsquo;ll receive a confirmation text at the number you provided once
+that&rsquo;s done. If you were not expecting this, no further action is needed and you
+will not be messaged.</p>
+<p class="note">Reply STOP at any time to unsubscribe, or HELP for assistance.
+Message &amp; data rates may apply. Questions: tyler@aigenpartners.com</p>
+</div>
+<p style="margin-top:1.6rem"><a href="/opt-in">SMS Program Disclosure</a> &nbsp;|&nbsp;
+<a href="/privacy">Privacy Policy</a> &nbsp;|&nbsp; <a href="/terms">Terms of Service</a></p>
+</body>
+</html>"""
+
+
 # Embed the consent form (and its styles) on the opt-in disclosure page, right
 # below the program header — the registered CTA says users who open this page
 # "see a form to fill out," so the form must be here verbatim.
@@ -297,15 +325,30 @@ async def consent_form_submit(
              "VALUES (:name, :phone, :ts)"),
         {"name": full_name.strip()[:100], "phone": normalized, "ts": now},
     )
-    await db.execute(
-        text("INSERT INTO sms_consent (phone, consented_at, method) "
-             "VALUES (:phone, :ts, 'web_form') "
+    # The consent record is written unconditionally — it is the legal evidence
+    # that this person opted in, and it is never withheld or edited. What the
+    # form does NOT do is grant access: the page is publicly linked, so a new
+    # submission lands as 'pending' until Cordia approves it. Someone already
+    # approved who re-signs keeps their approval rather than being demoted.
+    result = await db.execute(
+        text("INSERT INTO sms_consent (phone, consented_at, method, approval_status) "
+             "VALUES (:phone, :ts, 'web_form', 'pending') "
              "ON CONFLICT (phone) DO UPDATE SET consented_at = EXCLUDED.consented_at, "
-             "method = 'web_form', opted_out_at = NULL"),
+             "method = 'web_form', opted_out_at = NULL, "
+             "approval_status = CASE WHEN sms_consent.approval_status = 'approved' "
+             "THEN 'approved' ELSE 'pending' END "
+             "RETURNING approval_status"),
         {"phone": normalized, "ts": now},
     )
+    approval_status = (result.scalar() or "pending")
     await db.commit()
-    logger.info(f"Consent form submitted for {normalized}")
+    logger.info(f"Consent form submitted for {normalized} (approval={approval_status})")
+
+    if approval_status != "approved":
+        # Ask Cordia to make the call. Never let a notification failure break
+        # someone's consent submission — the record is already safely written.
+        await consent_service.notify_owner_of_submission(full_name.strip(), normalized)
+        return HTMLResponse(_CONSENT_PENDING)
     return HTMLResponse(_CONSENT_THANKS)
 
 

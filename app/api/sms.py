@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.config import settings
-from app.services import claude_service, family_circle_service, sms_service, twilio_service
+from app.services import claude_service, consent_service, family_circle_service, sms_service, twilio_service
 from app.utils.phone import phones_match
 
 logger = logging.getLogger(__name__)
@@ -56,24 +56,39 @@ async def _has_signed_consent_form(db: AsyncSession, phone: str) -> bool:
 
 
 async def _resolve_sender(db: AsyncSession, phone: str):
-    """Return (role, member). role is 'owner', 'family', or 'unknown'."""
+    """Return (role, member). role is 'owner', 'family', 'unapproved', or 'unknown'.
+
+    'unapproved' is deliberately distinct from 'unknown': the number is on a
+    profile, but Cordia has not approved (or has rejected) it, so it gets no
+    conversation. The consent form is publicly linked, so signing it is never
+    by itself enough to reach her assistant.
+    """
     if phones_match(phone, settings.cordia_phone_number) or phones_match(phone, settings.cordia_test_phone_number):
         return "owner", None
     member = await family_circle_service.resolve_member_by_phone(db, phone)
     if member and member.has_circle_access:
+        status = await consent_service.status_for(db, phone)
+        if status in ("rejected", "pending"):
+            return "unapproved", member
         return "family", member
     return "unknown", None
 
 
-async def _record_consent(db: AsyncSession, phone: str) -> None:
-    """Insert a consent record the first time a number contacts the service."""
+async def _record_consent(db: AsyncSession, phone: str, approved: bool = False) -> None:
+    """Insert a consent record the first time a number contacts the service.
+
+    `approved` is set when the sender already resolved to someone on Cordia's
+    roster — she put them there herself, which is her approval. Numbers that
+    arrive any other way stay pending until she says otherwise.
+    """
     await db.execute(
         text(
-            "INSERT INTO sms_consent (phone, consented_at, method) "
-            "VALUES (:phone, :ts, 'inbound_text') "
+            "INSERT INTO sms_consent (phone, consented_at, method, approval_status) "
+            "VALUES (:phone, :ts, 'inbound_text', :status) "
             "ON CONFLICT (phone) DO NOTHING"
         ),
-        {"phone": phone, "ts": datetime.now(timezone.utc)},
+        {"phone": phone, "ts": datetime.now(timezone.utc),
+         "status": "approved" if approved else "pending"},
     )
     await db.commit()
 
@@ -178,9 +193,18 @@ async def _process_inbound(db: AsyncSession, from_number: str, body: str, media:
     if role == "unknown":
         logger.warning(f"SMS from unknown number {from_number} — rejected")
         return
+    if role == "unapproved":
+        # Silence, not an explanation: telling an unapproved number what is
+        # gating it would confirm the roster to whoever is probing it.
+        logger.warning(
+            f"SMS from {from_number} ({member.name}) — consent on file but not "
+            "approved by Cordia; ignored"
+        )
+        return
 
-    # Record consent on first contact
-    await _record_consent(db, from_number)
+    # Record consent on first contact. Reaching here means they are on the
+    # roster and approved, so the record is created approved.
+    await _record_consent(db, from_number, approved=True)
 
     # First time a family member texts in: send the transparent welcome.
     # If they haven't signed the electronic consent form yet, point them to it.

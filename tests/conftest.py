@@ -30,7 +30,10 @@ async def engine():
             "phone VARCHAR(20) PRIMARY KEY, "
             "consented_at TIMESTAMPTZ NOT NULL, "
             "method VARCHAR(50) NOT NULL, "
-            "opted_out_at TIMESTAMPTZ)"
+            "opted_out_at TIMESTAMPTZ, "
+            # Migration 011: consent alone does not grant access.
+            "approval_status VARCHAR(10) NOT NULL DEFAULT 'pending', "
+            "reviewed_at TIMESTAMPTZ)"
         )
     yield eng
     await eng.dispose()
@@ -54,10 +57,30 @@ async def client(engine):
         async with Session() as session:
             yield session
 
+    # Webhooks acknowledge immediately and finish the work in a background
+    # task, which opens its OWN session from the module-level engine — that
+    # points at the production database name and is not overridable through
+    # dependency_overrides. Without this, background handlers silently died on
+    # a connection error and the webhook tests asserted against nothing.
+    import contextlib
+
+    import app.database as app_database
+
+    @contextlib.asynccontextmanager
+    async def _override_session():
+        async with Session() as session:
+            yield session
+
+    real_session = app_database.get_db_session
+    app_database.get_db_session = _override_session
+
     app.dependency_overrides[get_db] = _override_get_db
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-        yield c
-    app.dependency_overrides.clear()
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            yield c
+    finally:
+        app_database.get_db_session = real_session
+        app.dependency_overrides.clear()
 
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"

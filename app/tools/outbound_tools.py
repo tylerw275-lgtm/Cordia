@@ -120,18 +120,12 @@ def mask_address(addr: str | None) -> str:
 
 
 async def _sms_consent_ok(db: AsyncSession, phone: str) -> bool:
-    result = await db.execute(
-        # Match on the last 10 digits: consent rows are always +E164, but family
-        # profiles carry bare digits, so an opted-in son read as "not opted in"
-        # and his drafts were silently rerouted to email.
-        text(
-            "SELECT 1 FROM sms_consent "
-            "WHERE right(regexp_replace(phone, '[^0-9]', '', 'g'), 10) = :digits "
-            "AND consented_at IS NOT NULL AND opted_out_at IS NULL"
-        ),
-        {"digits": normalize_phone(phone)},
-    )
-    return result.first() is not None
+    """Consented, not opted out, AND approved by Cordia. Matching is on the
+    last 10 digits: consent rows are always +E164 but family profiles carry
+    bare digits, so an opted-in son once read as "not opted in" and his drafts
+    were silently rerouted to email."""
+    from app.services import consent_service
+    return await consent_service.is_approved(db, phone)
 
 
 async def _latest_batch_id(db: AsyncSession) -> str | None:

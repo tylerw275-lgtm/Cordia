@@ -37,6 +37,11 @@ h1{font-size:1.5rem;margin:0 0 4px}
 border-bottom:1px solid #f0f1f3;gap:12px;flex-wrap:wrap}
 .row:last-child{border-bottom:none}
 .label{color:#4b5563}
+.decide{display:flex;gap:6px;margin:0}
+.decide button{padding:5px 12px;border:none;border-radius:5px;font-size:.82rem;
+font-weight:600;cursor:pointer;color:#fff}
+.btn-ok{background:#1a6b3c}.btn-ok:hover{background:#155830}
+.btn-no{background:#a4262c}.btn-no:hover{background:#871f24}
 .val{font-weight:600;text-align:right}
 .pill{display:inline-block;padding:2px 10px;border-radius:99px;font-size:.8rem;font-weight:600}
 .ok{background:#e7f6ec;color:#11683a}
@@ -171,6 +176,57 @@ def _format_phone(raw: str) -> str:
     return raw or "—"
 
 
+@router.post("/consent-decision", include_in_schema=False)
+async def consent_decision(request: Request, phone: str = Form(...), decision: str = Form(...)):
+    """Approve or reject one pending number, from the dashboard.
+
+    Session-gated like the rest of the page. Rejecting only sets a flag — the
+    consent record itself is compliance evidence and is never touched.
+    """
+    if not _authorized(request):
+        return HTMLResponse(_LOGIN_PAGE.format(style=_STYLE, error=""), status_code=401)
+    if decision not in ("approved", "rejected"):
+        return RedirectResponse(url="/health/dashboard", status_code=303)
+
+    from app.database import get_db_session
+    from app.services import consent_service
+    try:
+        async with get_db_session() as db:
+            await consent_service.set_status(db, phone, decision)
+    except Exception as e:
+        logger.error(f"Consent decision failed for {phone}: {e}")
+    return RedirectResponse(url="/health/dashboard", status_code=303)
+
+
+def _decide_buttons(phone: str) -> str:
+    return (
+        '<form method="post" action="/health/consent-decision" class="decide">'
+        f'<input type="hidden" name="phone" value="{phone}">'
+        '<button name="decision" value="approved" class="btn-ok">Approve</button>'
+        '<button name="decision" value="rejected" class="btn-no">Reject</button>'
+        "</form>"
+    )
+
+
+def _local(dt, fmt: str = "%b %-d, %Y at %-I:%M %p") -> str:
+    """Render a stored UTC timestamp in Cordia's timezone.
+
+    Everything is stored in UTC. Showing it raw made a 7:09 PM submission read
+    as "Aug 21, 00:09" and look like it came from someone else in the night.
+    """
+    if not dt:
+        return "—"
+    from zoneinfo import ZoneInfo
+    from datetime import timezone as _tz
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=_tz.utc)
+    try:
+        local = dt.astimezone(ZoneInfo(settings.scheduler_timezone))
+    except Exception:
+        local = dt
+    return local.strftime(fmt)
+
+
 def _pill(ok: bool, yes: str = "Working", no: str = "Not set") -> str:
     return f'<span class="pill {"ok" if ok else "bad"}">{yes if ok else no}</span>'
 
@@ -194,14 +250,28 @@ async def dashboard(request: Request, secret: str = "") -> HTMLResponse:
     from sqlalchemy import text as sa_text
 
     # ---- consent picture -------------------------------------------------
-    consent_rows, people, circle_access = [], {}, {}
+    consent_rows, people, circle_access, submitted_names = [], {}, {}, {}
     db_error = None
     try:
         async with get_db_session() as db:
             consent_rows = (await db.execute(sa_text(
-                "SELECT phone, method, consented_at, opted_out_at FROM sms_consent "
+                "SELECT phone, method, consented_at, opted_out_at, approval_status "
+                "FROM sms_consent "
                 "ORDER BY consented_at DESC"
             ))).fetchall()
+            # The name typed on the form — the only clue to who an
+            # unrecognised pending number belongs to.
+            try:
+                for r in (await db.execute(sa_text(
+                    "SELECT full_name, phone FROM consent_submissions "
+                    "ORDER BY submitted_at DESC"
+                ))).fetchall():
+                    submitted_names.setdefault(normalize_phone(r.phone), r.full_name)
+            except Exception:
+                # The table only exists once someone has used the form. Roll
+                # back explicitly: a failed statement poisons the transaction,
+                # and every later query — the whole roster — would fail too.
+                await db.rollback()
             for m in (await db.execute(
                 select(FamilyMember).where(FamilyMember.phone.isnot(None))
             )).scalars():
@@ -217,22 +287,29 @@ async def dashboard(request: Request, secret: str = "") -> HTMLResponse:
         db_error = str(e)
         logger.error(f"Dashboard could not read the database: {e}")
 
-    can_text, pending, opted_out, unmatched = [], [], [], []
+    can_text, awaiting, rejected, opted_out, unmatched = [], [], [], [], []
     matched_keys = set()
-    for phone, method, consented_at, opted_out_at in consent_rows:
+    for phone, method, consented_at, opted_out_at, approval_status in consent_rows:
         key = normalize_phone(phone)
         matched_keys.add(key)
         name = people.get(key)
-        when = consented_at.strftime("%b %-d, %Y") if consented_at else "—"
+        when = _local(consented_at)
         how = {"web_form": "Signed the form", "keyword_start": "Texted START",
                "inbound_text": "Texted in"}.get(method, method or "—")
         can_reply = (
             '<span class="pill ok">yes</span>' if circle_access.get(key)
             else '<span class="pill warn">needs access</span>'
         )
-        entry = (name or "<em>unknown</em>", _format_phone(phone), how, when, can_reply)
+        entry = (name or f"<em>{submitted_names.get(key) or 'unknown'}</em>",
+                 _format_phone(phone), how, when, can_reply)
+        status = approval_status or "pending"
         if opted_out_at:
             opted_out.append(entry)
+        elif status == "rejected":
+            rejected.append(entry[:4] + (_decide_buttons(phone).replace(
+                '<button name="decision" value="rejected" class="btn-no">Reject</button>', ''),))
+        elif status != "approved":
+            awaiting.append(entry[:4] + (_decide_buttons(phone),))
         elif name:
             can_text.append(entry)
         else:
@@ -260,8 +337,19 @@ async def dashboard(request: Request, secret: str = "") -> HTMLResponse:
         body = "".join("<tr>" + "".join(f"<td>{c}</td>" for c in r) + "</tr>" for r in rows)
         return f"<table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
 
+    awaiting_section = "" if not awaiting else (
+        '<div class="card">'
+        '<h2>&#9888; Waiting for your approval</h2>'
+        '<div class="note">The consent form is a public link, so anyone can sign it. '
+        'Signing does <strong>not</strong> let them reach Cord &mdash; these people are '
+        'on hold until you decide. Text Cord <em>"approve"</em> or <em>"reject"</em> with '
+        'the last four digits &mdash; or decide right here.</div>'
+        + _table(awaiting, ["Name they gave", "Number", "How", "Signed", "Decision"], "")
+        + "</div>"
+    )
+
     q = f"?secret={secret}" if secret else ""
-    now = datetime.now(timezone.utc).strftime("%b %-d, %Y at %H:%M UTC")
+    now = _local(datetime.now(timezone.utc)) + f" ({settings.scheduler_timezone.split('/')[-1].replace('_', ' ')})"
 
     html = f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8">
@@ -269,6 +357,8 @@ async def dashboard(request: Request, secret: str = "") -> HTMLResponse:
 <title>Cord — Status</title><style>{_STYLE}</style></head><body><div class="wrap">
 <h1>Cord — Status</h1>
 <div class="sub">Checked {now}</div>
+
+{awaiting_section}
 
 <div class="card">
 <h2>Who Cord can text</h2>
@@ -283,6 +373,9 @@ see what they send back — ask Cord to give them circle access.</div>
  f'Call or text it to find out who it is, then either add that number to their '
  f'profile (so Cord can text them) or ignore it if it was a test.'
  f'{_table(unmatched, ["Name", "Number", "How", "Date", ""], "")}</div>' if unmatched else ''}
+{f'<div class="note"><strong>Rejected.</strong> You blocked these numbers. Their '
+ f'consent record is kept as required proof, but they can never reach Cord.'
+ f'{_table(rejected, ["Name they gave", "Number", "How", "Signed", ""], "")}</div>' if rejected else ''}
 {f'<div class="note"><strong>Opted out.</strong> Cord will never text these numbers.'
  f'{_table(opted_out, ["Name", "Number", "How", "Date", ""], "")}</div>' if opted_out else ''}
 </div>
