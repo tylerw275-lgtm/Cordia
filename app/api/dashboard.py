@@ -316,6 +316,21 @@ async def dashboard(request: Request, secret: str = "") -> HTMLResponse:
             unmatched.append(entry)
     no_consent = sorted(n for k, n in people.items() if k not in matched_keys)
 
+    # ---- what it costs ---------------------------------------------------
+    usage_month = usage_all = None
+    try:
+        from datetime import timedelta
+
+        from app.services import usage_service
+        async with get_db_session() as db:
+            month_start = datetime.now(timezone.utc).replace(
+                day=1, hour=0, minute=0, second=0, microsecond=0
+            )
+            usage_month = await usage_service.summary(db, since=month_start)
+            usage_all = await usage_service.summary(db)
+    except Exception as e:
+        logger.error(f"Dashboard could not read usage: {e}")
+
     # ---- channel health --------------------------------------------------
     sms_ready = bool(
         settings.signalhouse_api_key and settings.signalhouse_phone_number
@@ -336,6 +351,73 @@ async def dashboard(request: Request, secret: str = "") -> HTMLResponse:
         head = "".join(f"<th>{h}</th>" for h in headers)
         body = "".join("<tr>" + "".join(f"<td>{c}</td>" for c in r) + "</tr>" for r in rows)
         return f"<table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
+
+    def _money(v) -> str:
+        v = float(v or 0)
+        # Sub-cent totals are normal early on; showing "$0.00" would read as
+        # "nothing is being tracked" when in fact it is working.
+        return f"${v:,.2f}" if v >= 0.01 else f"${v:.4f}"
+
+    _USAGE_LABELS = [
+        ("sms_out", "Texts sent", "segments"),
+        ("sms_in", "Texts received", "segments"),
+        ("email_out", "Emails sent", "emails"),
+        ("email_in", "Emails received", "emails"),
+        ("ai_turn", "AI requests", "requests"),
+        ("web_search", "Web searches", "searches"),
+        ("web_fetch", "Pages read", "pages"),
+    ]
+
+    def _usage_card(month, all_time) -> str:
+        if month is None:
+            return ('<div class="card"><h2>What it costs</h2>'
+                    '<div class="note">Could not read the usage ledger.</div></div>')
+        rows = []
+        for key, label, unit in _USAGE_LABELS:
+            m = month["by_type"].get(key, {"quantity": 0, "cost": 0.0})
+            a = all_time["by_type"].get(key, {"quantity": 0, "cost": 0.0})
+            if not m["quantity"] and not a["quantity"]:
+                continue
+            rows.append((label, f'{m["quantity"]:,} {unit}', _money(m["cost"]),
+                         f'{a["quantity"]:,}', _money(a["cost"])))
+        table = _table(
+            rows, ["", "This month", "Cost", "All time", "Cost"],
+            "Nothing recorded yet — this fills in as Cord is used.",
+        )
+        people = _table(
+            [(_format_phone(p["actor"]) if any(c.isdigit() for c in (p["actor"] or "")) and "@" not in (p["actor"] or "")
+              else p["actor"], f'{p["events"]:,}', _money(p["cost"]))
+             for p in month["by_actor"][:10]],
+            ["Person", "Events", "Cost this month"],
+            "No activity yet this month.",
+        )
+        tokens = (f'{month["input_tokens"]:,} in / {month["output_tokens"]:,} out'
+                  if month["input_tokens"] or month["output_tokens"] else "—")
+        return f"""<div class="card">
+<h2>What it costs</h2>
+<div class="row"><span class="label">This month so far</span>
+<span class="val" style="font-size:1.35rem">{_money(month["total_cost"])}</span></div>
+<div class="row"><span class="label">All time</span>
+<span class="val">{_money(all_time["total_cost"])}</span></div>
+<div class="row"><span class="label">AI tokens this month</span>
+<span class="val">{tokens}</span></div>
+{table}
+<h2 style="margin-top:22px">By person, this month</h2>
+{people}
+<div class="note"><strong>How these are worked out.</strong> Texts bill per
+<em>segment</em>, not per message — a long reply is several segments, and one
+emoji drops the limit from 160 characters to 70. AI cost uses Anthropic's list
+prices for {settings.claude_model}, with cached input at a tenth of the normal
+rate. Web search is {_money(settings.web_search_cost)} per search. Texts are
+{_money(settings.sms_cost_outbound)} per segment and email
+{_money(settings.email_cost_outbound)} each &mdash; those two are estimates
+until you set your real contracted rates in Railway
+(<code>SMS_COST_OUTBOUND</code>, <code>EMAIL_COST_OUTBOUND</code>). Each charge
+is stored at the rate in force when it happened, so changing a rate never
+rewrites past months.</div>
+</div>"""
+
+    usage_section = _usage_card(usage_month, usage_all)
 
     awaiting_section = "" if not awaiting else (
         '<div class="card">'
@@ -409,6 +491,8 @@ see what they send back — ask Cord to give them circle access.</div>
       (settings.naples_email_address and settings.naples_email_app_password)
       else '<span class="pill off">not set up</span>')}
 </div>
+
+{usage_section}
 
 <div class="card">
 <h2>Features</h2>

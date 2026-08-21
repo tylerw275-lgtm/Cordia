@@ -71,4 +71,9 @@ async def send_sms(to: str, body: str, force: bool = False) -> bool:
         await signalhouse_service.send_sms(to=to, body=body)
     else:
         await twilio_service.send_sms(to=to, body=body)
+
+    # Ledger last: only a message that actually went out is billable, and a
+    # bookkeeping failure must never look like a send failure.
+    from app.services import usage_service
+    await usage_service.record_sms(to, body, outbound=True)
     return True

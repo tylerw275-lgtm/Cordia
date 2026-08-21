@@ -93,6 +93,18 @@ SMS program name remains "Cordia AI by AI-Gen Partners" for compliance.)
   described as "in development," and Cordia can ask for features she wants — they're
   logged for the team (`request_feature`).
 
+**Live web research**
+- Cord can search the web and read pages, so prices, hours, addresses, availability
+  and seasonal conditions come from a page it actually read rather than memory —
+  and it says where each figure came from. A failed search is reported as a failure,
+  never passed off as "nothing found."
+
+**Cost tracking**
+- Every text (billed per *segment*, not per message), email, AI request and web
+  search is recorded with what it cost, and the dashboard shows this month, all
+  time, and a per-person breakdown. Rates are configurable; the page always states
+  the ones it used.
+
 **Lease / document review**
 - Analyzes a lease, flags clauses by severity (standard / flag / urgent), stores a
   summary, and can schedule renewal-deadline reminders.
@@ -127,7 +139,7 @@ at cordia.aigenpartners.com; the opt-in page carries the consent form itself.
 
 **Stack**
 - Python + **FastAPI**; **PostgreSQL** via async SQLAlchemy; **Alembic** migrations
-  (through `008_widen_conversation_key`); **APScheduler** for recurring jobs, on an
+  (through `012_usage_events`); **APScheduler** for recurring jobs, on an
   explicit `SCHEDULER_TIMEZONE`.
 - **SMS:** Signal House (10DLC campaign approved). Inbound webhook
   `POST /webhook/signalhouse` (shared-secret auth, constant-time compare); outbound via
@@ -158,7 +170,7 @@ at cordia.aigenpartners.com; the opt-in page carries the consent form itself.
   deployment diagnostics.
 
 **Feature flags (`app/config.py`)**
-- `enable_flight_search` (on) · `enable_lease_review` (on) · `enable_family_coordination`
+- `enable_web_research` (on, ~$0.01/search) · `enable_flight_search` (on) · `enable_lease_review` (on) · `enable_family_coordination`
   (on) · `enable_email` (on) · `enable_flight_booking` (**off** until tested) ·
   `enable_outbound` (**off** until the approval flow is verified) · Naples inbox (on when
   `naples_email_address`/`naples_email_app_password` are set).

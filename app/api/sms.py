@@ -220,6 +220,8 @@ async def _process_inbound(db: AsyncSession, from_number: str, body: str, media:
         await sms_service.send_sms(to=from_number, body=welcome)
 
     logger.info(f"Inbound SMS from {from_number} (role={role}, media={len(media)}): {body[:50]}...")
+    from app.services import usage_service
+    await usage_service.record_sms(from_number, body or "", outbound=False)
 
     # Download images only now that the sender is authorized (Twilio MMS only)
     images = await twilio_service.fetch_image_blocks(media) if media else []

@@ -83,6 +83,22 @@ class Settings(BaseSettings):
     # Unset means loyalty numbers cannot be stored at all (fails closed).
     loyalty_encryption_key: str = ""
 
+    # Cost tracking rates, USD. Defaults are typical US list prices; set them to
+    # the real contracted rates so the dashboard reports actual spend rather than
+    # an estimate. The dashboard states which rates it used.
+    sms_cost_outbound: float = 0.0079   # per segment, not per message
+    sms_cost_inbound: float = 0.0079
+    email_cost_outbound: float = 0.0004  # Resend $20/mo ÷ 50k emails
+    email_cost_inbound: float = 0.0
+    web_search_cost: float = 0.01        # Anthropic: $10 per 1,000 searches
+    web_fetch_cost: float = 0.0          # billed as tokens, not per fetch
+
+    # Live web research via Anthropic's server-side search/fetch tools. Costs
+    # ~$0.01 per search on top of tokens, so the per-turn ceilings are config.
+    enable_web_research: bool = True
+    web_search_max_uses: int = 8
+    web_fetch_max_uses: int = 5
+
     enable_flight_search: bool = True
     enable_lease_review: bool = True
     enable_family_coordination: bool = True

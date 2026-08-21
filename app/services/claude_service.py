@@ -282,6 +282,88 @@ async def _build_family_system(db: AsyncSession, member) -> list[dict]:
     return build_family_system_prompt(member.name, req_text)
 
 
+# Roles allowed to reach the live web. Deliberately not "family" and never
+# "untrusted": the untrusted role exists to read attacker-controllable content,
+# and handing it a search tool would let that content go fetch more of itself.
+_WEB_RESEARCH_ROLES = ("owner",)
+
+
+def _web_tools(role: str, profile) -> list[dict]:
+    """Anthropic's server-side research tools, versioned for this model family.
+
+    These run on Anthropic's infrastructure — there is no handler to implement
+    and no key to hold. Note we do NOT also declare code_execution: the current
+    tool versions run it internally for result filtering, and a second execution
+    environment confuses the model.
+    """
+    if not settings.enable_web_research or role not in _WEB_RESEARCH_ROLES:
+        return []
+    tools = [{
+        "type": profile.web_search_version,
+        "name": "web_search",
+        "max_uses": settings.web_search_max_uses,
+    }]
+    if profile.web_fetch_version:
+        tools.append({
+            "type": profile.web_fetch_version,
+            "name": "web_fetch",
+            "max_uses": settings.web_fetch_max_uses,
+        })
+    return tools
+
+
+def _web_tool_error(content: Any) -> str | None:
+    """Server tools fail with HTTP 200, not an exception.
+
+    A successful web_search result carries a *list*; a failed one carries an
+    error *object*. Indexing without checking would read the error as an empty
+    result set and the model would answer as though the web said nothing.
+    """
+    if isinstance(content, dict):
+        return str(content.get("error_code") or content.get("type") or "unknown_error")
+    return None
+
+
+def _collect_web_errors(blocks: list) -> list[str]:
+    errors = []
+    for block in blocks:
+        if getattr(block, "type", None) in ("web_search_tool_result", "web_fetch_tool_result"):
+            code = _web_tool_error(getattr(block, "content", None))
+            if code:
+                errors.append(code)
+    return errors
+
+
+async def _record_turn_usage(db: AsyncSession, response, actor: str | None) -> None:
+    """Bill one API request: tokens always, plus any server-tool calls it made.
+
+    Every iteration of the loop is a separate billable request, so this runs
+    per response rather than once per conversation turn — a research turn that
+    searches five times costs five searches and several requests' worth of
+    tokens, and the ledger should say so.
+    """
+    from app.services import usage_service
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return
+    model = settings.claude_model
+    await usage_service.record(
+        db, "ai_turn", actor=actor, model=model, usage=usage,
+        cost_usd=usage_service.ai_turn_cost(model, usage),
+    )
+    for tool, count in usage_service.server_tool_counts(usage).items():
+        rate = settings.web_search_cost if tool == "web_search" else settings.web_fetch_cost
+        await usage_service.record(
+            db, tool, actor=actor, quantity=count, cost_usd=count * rate,
+        )
+
+
+# A turn using server tools stops with pause_turn once Anthropic's internal
+# tool loop hits its iteration limit. Resuming is a bare re-request; this caps
+# how many times we will do that before answering with what we have.
+_MAX_PAUSE_RESUMES = 3
+
+
 async def chat(
     db: AsyncSession,
     conversation_id: uuid.UUID,
@@ -326,10 +408,19 @@ async def chat(
     # Persist a lightweight text record (we don't store raw image bytes in history)
     await _persist_message(db, conversation_id, "user", persisted)
 
+    # Attribute cost to a person, not a conversation id. The member's phone is
+    # the same key their SMS usage is recorded under, so a per-person total
+    # lines up across channels.
+    usage_actor = getattr(sender_member, "phone", None) or (
+        settings.cordia_phone_number if sender_role == "owner" else None
+    )
+
     messages = history + [{"role": "user", "content": user_content}]
-    tools = get_tool_schemas(sender_role)
+    tools = list(get_tool_schemas(sender_role)) + _web_tools(sender_role, profile)
 
     max_iterations = 10
+    pause_resumes = 0
+    web_errors: list[str] = []
     for _ in range(max_iterations):
         response = await _client.messages.create(
             model=settings.claude_model,
@@ -344,8 +435,33 @@ async def chat(
         assistant_content = [block.model_dump() for block in response.content]
         await _persist_message(db, conversation_id, "assistant", assistant_content)
 
+        await _record_turn_usage(db, response, actor=usage_actor)
+        web_errors.extend(_collect_web_errors(response.content))
+
         if response.stop_reason == "end_turn":
-            return _extract_text(response.content) or _FALLBACK_REPLY
+            text = _extract_text(response.content) or _FALLBACK_REPLY
+            if web_errors and not _extract_text(response.content):
+                # Never let a failed search read as "nothing found."
+                return ("I could not reach the web to check that just now "
+                        f"({', '.join(sorted(set(web_errors)))}). Ask me again in a moment.")
+            return text
+
+        if response.stop_reason == "pause_turn":
+            # Anthropic's server-side tool loop hit its own iteration limit
+            # mid-research. Resuming is a plain re-request with the paused turn
+            # appended and NO extra user message — the API sees the trailing
+            # server_tool_use block and carries on. Without this branch the turn
+            # fell through to the catch-all below and returned a half-finished
+            # answer with no error anywhere.
+            pause_resumes += 1
+            if pause_resumes > _MAX_PAUSE_RESUMES:
+                logger.warning(
+                    f"Research still paused after {_MAX_PAUSE_RESUMES} resumes "
+                    f"(conversation {conversation_id}); answering with what we have"
+                )
+                return _extract_text(response.content) or _FALLBACK_REPLY
+            messages.append({"role": "assistant", "content": assistant_content})
+            continue
 
         if response.stop_reason == "tool_use":
             tool_results = []

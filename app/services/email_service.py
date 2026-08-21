@@ -86,14 +86,23 @@ async def send_email(to: str, subject: str, body_markdown: str) -> dict:
         if not settings.email_address or not settings.email_app_password:
             logger.warning("Gmail not configured (address / app password missing) — skipping send")
             return {"sent": False, "reason": "email_not_configured"}
-        return await _send_gmail(to, subject, html, body_markdown)
+        return await _record(await _send_gmail(to, subject, html, body_markdown), to)
     if provider == "resend":
         if not settings.email_api_key or not from_address():
             logger.warning("Resend not configured (api key / from missing) — skipping send")
             return {"sent": False, "reason": "email_not_configured"}
-        return await _send_resend(to, subject, html, body_markdown)
+        return await _record(await _send_resend(to, subject, html, body_markdown), to)
     logger.error(f"Unknown email provider: {provider}")
     return {"sent": False, "reason": "unknown_provider"}
+
+
+async def _record(result: dict, to: str) -> dict:
+    """Bill only for mail that actually left. A skipped or failed send is not
+    a cost, and counting it would quietly inflate every report."""
+    if result.get("sent"):
+        from app.services import usage_service
+        await usage_service.record_email(to, outbound=True)
+    return result
 
 
 def _send_gmail_sync(to: str, subject: str, html: str, text: str) -> None:

@@ -155,6 +155,8 @@ async def process_inbound_email(db: AsyncSession, sender: str, subject: str, bod
         return "ignored_unknown_sender"
 
     logger.info(f"Inbound email from {_mask(sender)} (role={role}): {subject[:50]}")
+    from app.services import usage_service
+    await usage_service.record_email(sender, outbound=False)
     conversation = await claude_service.get_or_create_conversation(db, conv_key)
 
     if role == "trusted_contact":

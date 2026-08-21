@@ -40,46 +40,57 @@ async def engine():
 
 
 @pytest_asyncio.fixture
-async def db(engine):
+async def _session_override(engine):
+    """Point app.database.get_db_session at the test engine.
+
+    Code that opens its OWN session — background webhook handlers, the usage
+    ledger — goes through the module-level engine, which names the production
+    database and cannot be reached by dependency_overrides. Several of those
+    call sites deliberately swallow their errors, so without this they fail
+    silently in tests and the assertions pass against nothing.
+    """
+    import contextlib
+
+    import app.database as app_database
+
     Session = async_sessionmaker(engine, expire_on_commit=False)
-    async with Session() as session:
+
+    @contextlib.asynccontextmanager
+    async def _override():
+        async with Session() as session:
+            yield session
+
+    real = app_database.get_db_session
+    app_database.get_db_session = _override
+    try:
+        yield Session
+    finally:
+        app_database.get_db_session = real
+
+
+@pytest_asyncio.fixture
+async def db(_session_override):
+    async with _session_override() as session:
         yield session
         await session.rollback()
 
 
 @pytest_asyncio.fixture
-async def client(engine):
+async def client(_session_override):
     # Point the app's get_db at the function-scoped test engine so requests
     # don't touch the module-level engine bound to a different event loop.
-    Session = async_sessionmaker(engine, expire_on_commit=False)
+    # _session_override covers the background-task path at the same time.
+    Session = _session_override
 
     async def _override_get_db():
         async with Session() as session:
             yield session
-
-    # Webhooks acknowledge immediately and finish the work in a background
-    # task, which opens its OWN session from the module-level engine — that
-    # points at the production database name and is not overridable through
-    # dependency_overrides. Without this, background handlers silently died on
-    # a connection error and the webhook tests asserted against nothing.
-    import contextlib
-
-    import app.database as app_database
-
-    @contextlib.asynccontextmanager
-    async def _override_session():
-        async with Session() as session:
-            yield session
-
-    real_session = app_database.get_db_session
-    app_database.get_db_session = _override_session
 
     app.dependency_overrides[get_db] = _override_get_db
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             yield c
     finally:
-        app_database.get_db_session = real_session
         app.dependency_overrides.clear()
 
 

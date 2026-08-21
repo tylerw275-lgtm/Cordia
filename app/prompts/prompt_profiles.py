@@ -29,6 +29,12 @@ class PromptProfile:
     normal_extras: dict = field(default_factory=dict)
     deep_extras: dict = field(default_factory=dict)
     prompting_notes: str = ""
+    # Server-side web tool versions this model family accepts. The 2026-02-09
+    # variants add dynamic filtering (results are filtered before they reach the
+    # context window); older families only have the basic search and no fetch at
+    # all, so web_fetch_version is None there rather than a version that 400s.
+    web_search_version: str = "web_search_20250305"
+    web_fetch_version: str | None = None
 
 
 _MODERN_NOTES = (
@@ -51,26 +57,36 @@ _PROFILES: list[tuple[str, PromptProfile]] = [
         # Thinking is always on for Fable — never send a thinking param.
         deep_extras={"output_config": {"effort": "high"}},
         prompting_notes=_MODERN_NOTES,
+        web_search_version="web_search_20260209",
+        web_fetch_version="web_fetch_20260209",
     )),
     ("claude-opus-5", PromptProfile(
         family="frontier",
         deep_extras={"output_config": {"effort": "high"}},
         prompting_notes=_MODERN_NOTES,
+        web_search_version="web_search_20260209",
+        web_fetch_version="web_fetch_20260209",
     )),
     ("claude-sonnet-5", PromptProfile(
         family="frontier",
         deep_extras={"output_config": {"effort": "high"}},
         prompting_notes=_MODERN_NOTES,
+        web_search_version="web_search_20260209",
+        web_fetch_version="web_fetch_20260209",
     )),
     ("claude-opus-4-8", PromptProfile(
         family="modern",
         deep_extras={"thinking": {"type": "adaptive"}},
         prompting_notes=_MODERN_NOTES,
+        web_search_version="web_search_20260209",
+        web_fetch_version="web_fetch_20260209",
     )),
     ("claude-opus-4-7", PromptProfile(
         family="modern",
         deep_extras={"thinking": {"type": "adaptive"}},
         prompting_notes=_MODERN_NOTES,
+        web_search_version="web_search_20260209",
+        web_fetch_version="web_fetch_20260209",
     )),
     # 4.6 family (current production model): adaptive thinking supported,
     # instructions followed literally.
@@ -78,11 +94,15 @@ _PROFILES: list[tuple[str, PromptProfile]] = [
         family="modern",
         deep_extras={"thinking": {"type": "adaptive"}},
         prompting_notes=_MODERN_NOTES,
+        web_search_version="web_search_20260209",
+        web_fetch_version="web_fetch_20260209",
     )),
     ("claude-opus-4-6", PromptProfile(
         family="modern",
         deep_extras={"thinking": {"type": "adaptive"}},
         prompting_notes=_MODERN_NOTES,
+        web_search_version="web_search_20260209",
+        web_fetch_version="web_fetch_20260209",
     )),
 ]
 
@@ -104,6 +124,12 @@ _DEEP_WORK_KEYWORDS = (
     "party", "event", "comedy", "dinner", "gala", "fundraiser", "host",
     "celebration", "itinerary", "compare", "options", "recommend",
     "write", "draft", "prepare", "help me with", "put together",
+    # Procurement and setup asks deserve the same depth: "what should I pack
+    # for the Naples house" and "find me a car service" both need an interview
+    # and real research, and neither matched anything above.
+    "pack", "packing", "move", "moving", "furnish", "outfit", "set up",
+    "book", "booking", "hire", "quote", "price", "pricing", "cost",
+    "find me", "look up", "search for", "shop", "vendor", "service",
 )
 
 
