@@ -180,33 +180,68 @@ def _sanitize_history(turns: list[dict]) -> list[dict]:
     return kept
 
 
-def _trim_to_turns(turns: list[dict], max_turns: int) -> list[dict]:
-    """Keep the most recent turns, cutting only at a plain user turn so a
-    tool_use/tool_result pair is never split across the boundary."""
-    if len(turns) <= max_turns:
-        return turns
-    # Prefer a cut near max_turns, but fall back to any earlier valid boundary
-    # rather than discarding the conversation entirely.
-    for start in list(range(len(turns) - max_turns, len(turns))) + list(range(len(turns) - max_turns)):
-        turn = turns[start]
-        if turn["role"] != "user":
-            continue
-        content = turn["content"]
-        blocks = content if isinstance(content, list) else []
-        if not any(b.get("type") == "tool_result" for b in blocks):
-            return turns[start:]
-    return []
+def _shrink_tool_result(block: dict) -> dict:
+    """Cap one replayed tool_result.
+
+    The model saw the whole thing in the turn that produced it and has already
+    said what it concluded. Replaying thirty thousand characters of search JSON
+    on every subsequent turn buys nothing and is what pushed the rest of the
+    conversation out of the window.
+    """
+    body = block.get("content")
+    if not isinstance(body, str):
+        return block
+    cap = settings.history_max_tool_result_chars
+    if len(body) <= cap:
+        return block
+    return {**block, "content": body[:cap] + f"\n...[{len(body) - cap} more characters trimmed]"}
+
+
+def _turn_chars(turn: dict) -> int:
+    content = turn["content"]
+    return len(content) if isinstance(content, str) else len(json.dumps(content))
+
+
+def _trim_to_chars(turns: list[dict], budget: int) -> list[dict]:
+    """Keep the most recent turns that fit, cutting only at a plain user turn so
+    a tool_use/tool_result pair is never split across the boundary."""
+    kept: list[dict] = []
+    used = 0
+    for turn in reversed(turns):
+        used += _turn_chars(turn)
+        if used > budget and kept:
+            break
+        kept.insert(0, turn)
+    # The cut may have landed mid-exchange; walk forward to a clean start.
+    while kept:
+        first = kept[0]
+        blocks = first["content"] if isinstance(first["content"], list) else []
+        if first["role"] == "user" and not any(b.get("type") == "tool_result" for b in blocks):
+            return kept
+        kept.pop(0)
+    return kept
 
 
 async def _load_history(
-    db: AsyncSession, conversation_id: uuid.UUID, limit: int = 40, max_turns: int = 20
+    db: AsyncSession,
+    conversation_id: uuid.UUID,
+    limit: int | None = None,
+    max_chars: int | None = None,
 ) -> list[dict]:
     """Rebuild the conversation as a valid Messages API transcript.
 
     Rows are fetched generously and sanitized afterwards, because the window
     boundary itself is what orphans tool calls — a tool exchange costs several
-    rows, so a raw 20-row window routinely sliced one in half.
+    rows, so a raw row window routinely sliced one in half.
+
+    The window is a character budget rather than a row count. Forty rows sounds
+    like plenty until you notice a single deep turn writes about twenty-one of
+    them, so two of them evicted the whole conversation. Characters are what
+    actually cost money, and they do not care how the work was split into rows.
     """
+    limit = settings.history_max_rows if limit is None else limit
+    max_chars = settings.history_max_chars if max_chars is None else max_chars
+
     result = await db.execute(
         select(Message)
         .where(Message.conversation_id == conversation_id)
@@ -222,8 +257,9 @@ async def _load_history(
             # Tool results are persisted as JSON and replayed as a user turn.
             decoded = _decode_content(msg.content, "user")
             if isinstance(decoded, list) and decoded:
-                turns.append({"role": "user", "content": decoded})
-    return _trim_to_turns(_sanitize_history(turns), max_turns)
+                turns.append({"role": "user",
+                              "content": [_shrink_tool_result(b) for b in decoded]})
+    return _trim_to_chars(_sanitize_history(turns), max_chars)
 
 
 async def _persist_message(
@@ -281,6 +317,16 @@ async def _build_owner_system(db: AsyncSession, user_message: str, context_hint:
         lines = [f"- {m.subject}: {m.content}" for m in memories]
         system.append({"type": "text", "text": "\nRELEVANT MEMORY:\n" + "\n".join(lines)})
 
+    # Work in flight, named. History is a window, and a trip planned over three
+    # weeks will outlive it however wide it is — the transcript of turn one is
+    # gone by turn eighty. What must not be lost is that the job exists and what
+    # is still missing from it, and that lives in Project rather than in the
+    # conversation. Titles and open questions only; the detail is a tool call
+    # away via get_project.
+    open_work = await _open_work_text(db, sender_user)
+    if open_work:
+        system.append({"type": "text", "text": open_work})
+
     # Make Cordia aware of new family contributions without auto-consuming them
     pending = await family_circle_service.get_unsurfaced_inputs(db)
     if pending:
@@ -293,6 +339,43 @@ async def _build_owner_system(db: AsyncSession, user_message: str, context_hint:
             ),
         })
     return system
+
+
+# Enough to recognise a job and pick it back up, small enough to sit in every
+# request. Projects are ordered most-recent-first by the handler.
+_OPEN_WORK_LIMIT = 5
+
+
+async def _open_work_text(db: AsyncSession, sender_user: Any) -> str:
+    """The principal's live projects, or "" if there are none.
+
+    Deliberately routed through the same handler the model calls, so the
+    workspace walls are enforced in one place. A prompt that built its own query
+    would be the one path that quietly ignored them.
+    """
+    from app.tools import project_tools
+    try:
+        result = await project_tools.list_projects_handler(db, acting_user=sender_user)
+    except Exception as e:                       # pragma: no cover - defensive
+        logger.warning(f"Could not load open work for the system prompt: {e}")
+        return ""
+
+    live = [p for p in result.get("projects", []) if p.get("status") != "delivered"]
+    if not live:
+        return ""
+
+    lines = []
+    for project in live[:_OPEN_WORK_LIMIT]:
+        line = f"- {project['title']} ({project['status']}) [id {project['project_id']}]"
+        if project.get("still_missing"):
+            line += " — still waiting on: " + "; ".join(project["still_missing"][:3])
+        lines.append(line)
+    return (
+        "\nWORK ALREADY OPEN:\n" + "\n".join(lines) +
+        "\nIf this message is about one of these, carry it on rather than starting "
+        "again — call get_project for the detail, and never re-ask a question the "
+        "brief already has an answer to. If it is something new, start a new project."
+    )
 
 
 async def _build_family_system(db: AsyncSession, member) -> list[dict]:
@@ -438,6 +521,35 @@ async def _create_with_fallback(*, tools: list[dict], web_tools: list[dict], **k
 _MAX_PAUSE_RESUMES = 3
 
 
+# A preamble ("Let me check that") is noise in a partial answer; a paragraph of
+# findings is the answer. The threshold is crude on purpose — the alternative is
+# guessing at intent, and the cost of keeping one preamble is one extra line.
+_PROGRESS_MIN_CHARS = 80
+
+
+def _remember_progress(progress: list[str], text: str) -> None:
+    text = (text or "").strip()
+    if len(text) >= _PROGRESS_MIN_CHARS and text not in progress:
+        progress.append(text)
+
+
+def _out_of_budget(progress: list[str]) -> str:
+    """What she gets when a turn runs out of room.
+
+    It used to be "I hit a snag working on that. Try rephrasing your request."
+    after ten API requests and fifteen real tool calls had been billed, with
+    every partial result discarded — and the retry started with less context
+    than the first attempt, not more. The work is in the transcript either way,
+    so "keep going" genuinely resumes from here.
+    """
+    if progress:
+        return ("\n\n".join(progress) + "\n\nThat is as far as I got in one pass — "
+                "there was more to check than fits in a single go. Say 'keep going' "
+                "and I will carry on from here.")
+    return ("That one needs more digging than fits in a single pass. Say 'keep going' "
+            "and I will pick up where I stopped.")
+
+
 async def chat(
     db: AsyncSession,
     conversation_id: uuid.UUID,
@@ -500,12 +612,23 @@ async def chat(
     web_tools = _web_tools(sender_role, profile)
     tools = list(get_tool_schemas(sender_role)) + web_tools
 
-    max_iterations = 10
+    # Tool rounds, not API requests. A pause_turn resume is one more request
+    # and zero new tool work, so counting it against this budget meant three
+    # resumes on a research-heavy ask left seven rounds to do the actual job.
+    max_iterations = (settings.max_tool_iterations_deep if deep
+                      else settings.max_tool_iterations)
+    tool_rounds = 0
     pause_resumes = 0
     web_errors: list[str] = []
     research_unavailable = False
     pause_partial = ""
-    for _ in range(max_iterations):
+    # Everything substantive the model said along the way. If the budget runs
+    # out, this is the answer she gets instead of "try rephrasing" — the work
+    # is already done and already paid for.
+    progress: list[str] = []
+    # Requests, not rounds. Belt to the tool-round braces: no combination of
+    # pauses and retries can spin here forever.
+    for _ in range(max_iterations + _MAX_PAUSE_RESUMES + 2):
         try:
             response, dropped_web = await _create_with_fallback(
                 tools=tools,
@@ -538,6 +661,7 @@ async def chat(
 
         await _record_turn_usage(db, response, actor=usage_actor)
         web_errors.extend(_collect_web_errors(response.content))
+        _remember_progress(progress, _extract_text(response.content))
 
         if response.stop_reason == "end_turn":
             text = _extract_text(response.content) or _FALLBACK_REPLY
@@ -587,6 +711,13 @@ async def chat(
         pause_partial = ""
 
         if response.stop_reason == "tool_use":
+            tool_rounds += 1
+            if tool_rounds > max_iterations:
+                logger.warning(
+                    f"Tool budget of {max_iterations} rounds spent for conversation "
+                    f"{conversation_id}; answering with the work so far"
+                )
+                return _out_of_budget(progress)
             tool_results = []
             for block in response.content:
                 if block.type == "tool_use":
@@ -600,6 +731,14 @@ async def chat(
                             result = await handler(db=db, **extra, **block.input)
                         except Exception as e:
                             logger.error(f"Tool {block.name} error: {e}")
+                            # Also where it can be seen without shell access.
+                            # A handler that cannot run is reported to the model
+                            # as an ordinary result and to nobody else, which is
+                            # how memory stayed dead for six deploys.
+                            from app.services import usage_service
+                            await usage_service.record_error(
+                                f"tool:{block.name}", e, actor=usage_actor
+                            )
                             result = {"error": str(e)}
                     tool_results.append({
                         "type": "tool_result",
@@ -617,5 +756,5 @@ async def chat(
             # Unexpected stop reason — return whatever text we have
             return _extract_text(response.content) or _FALLBACK_REPLY
 
-    logger.warning(f"Max tool iterations reached for conversation {conversation_id}")
-    return "I hit a snag working on that. Try rephrasing your request."
+    logger.warning(f"Request budget exhausted for conversation {conversation_id}")
+    return _out_of_budget(progress)

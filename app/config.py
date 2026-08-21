@@ -150,6 +150,32 @@ class Settings(BaseSettings):
     web_search_max_uses: int = 8
     web_fetch_max_uses: int = 5
 
+    # How many tool rounds one turn may take. Each round is one API request, so
+    # this is the ceiling on both the answer's depth and its cost.
+    #
+    # It was 10, hardcoded, and sequential work spends one per round: a trip
+    # that prices flights, then lodging, then visas, then vaccinations, then a
+    # guide is 15-20. On exhaustion the turn was thrown away and she was told to
+    # rephrase, having already paid for every round. Deep work gets the larger
+    # budget because that is exactly the ask that needs it.
+    max_tool_iterations: int = 12
+    max_tool_iterations_deep: int = 25
+
+    # How much conversation to replay. The old window was 40 rows, and a single
+    # deep turn writes about 21 of them, so two deep turns evicted the entire
+    # prior conversation — a three-week trip lost its thread twice a day.
+    #
+    # Rows are the wrong unit: what costs money is characters, and what makes a
+    # turn expensive is one enormous tool result, not many small exchanges.
+    # Budgeting by characters keeps far more of an ordinary conversation and
+    # still bounds the worst case.
+    history_max_rows: int = 200
+    history_max_chars: int = 48_000
+    # A single stored tool result replayed in full. The model already saw all of
+    # it in the turn that produced it; replaying 30k characters of search JSON
+    # is what evicted everything else.
+    history_max_tool_result_chars: int = 3_000
+
     enable_flight_search: bool = True
     enable_lease_review: bool = True
     enable_family_coordination: bool = True
