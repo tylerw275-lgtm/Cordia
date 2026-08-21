@@ -1,6 +1,7 @@
 import asyncio
 import hmac
 import logging
+import random
 from collections import OrderedDict
 from datetime import datetime, timezone
 
@@ -153,19 +154,97 @@ async def _process_inbound_bg(from_number: str, body: str, media: list) -> None:
 # If a reply is still being composed after this many seconds, send a short
 # courtesy note so she isn't left wondering whether it landed.
 _SLOW_REPLY_SECONDS = 4.0
-_WORKING_NOTE = "Got it - working on this now, one moment."
+
+# Every line here is plain ASCII, and that is a cost decision rather than a style
+# one: an em dash or a curly quote is non-GSM, which re-encodes the whole message
+# as UCS-2 and drops the segment limit from 160 characters to 70 — doubling the
+# carrier cost of a note whose entire job is to be cheap and quick.
+_WORKING_NOTES = (
+    "Got it - working on this now, one moment.",
+    "On it.",
+    "Sure - give me a second.",
+    "Got it. One moment.",
+    "Working on this now.",
+    "On it - back in a sec.",
+    "Got it, thinking this through.",
+)
+
+# For asks that genuinely take a while, say what is actually happening instead of
+# a generic hold. Being told "looking this up" reads as work, not as a stall.
+_RESEARCH_NOTES = (
+    "Looking into this now - give me a minute.",
+    "On it. Let me check a few things.",
+    "Good one - digging into this now.",
+    "Let me look that up properly, one moment.",
+    "Checking on this now - won't be long.",
+    "On it. This one's worth doing right, so give me a minute.",
+)
+
+# Sent when a turn is genuinely long — deep research can run a minute or more,
+# and going quiet after one "on it" reads worse than the repetition did.
+_STILL_WORKING_NOTES = (
+    "Still on it.",
+    "Still working on this - almost there.",
+    "Not forgotten, still digging.",
+    "Still going. Thanks for your patience.",
+    "Still on this one - it's taking a bit.",
+)
+
+# Seconds to wait before each note, cumulative: 4s, then 34s, then 79s. After
+# that Cord goes quiet on purpose — every note is a billable segment, and a
+# fourth one is nagging rather than reassuring. The real reply (or the error) is
+# what arrives next either way.
+_NOTE_SCHEDULE = (4.0, 30.0, 45.0)
+
+# The last note sent to each number, so the same phrasing never lands twice in a
+# row. Random choice repeats often enough to notice, and a visible repeat is the
+# exact thing this is meant to remove. Bounded like _RECENT_MESSAGE_IDS.
+_LAST_NOTE: "OrderedDict[str, str]" = OrderedDict()
+_LAST_NOTE_MAX = 200
 
 
-async def _notify_if_slow(to: str) -> None:
-    """Sleep, then send a brief 'working on it' note. Cancelled if the real
-    reply is ready first, so fast answers never get a preamble."""
+def _working_note(to: str, body: str = "", followup: bool = False) -> str:
+    """Pick a holding line, matched to the ask and never repeating for a person."""
+    from app.prompts.prompt_profiles import is_deep_work
+
+    if followup:
+        pool = _STILL_WORKING_NOTES
+    else:
+        pool = _RESEARCH_NOTES if is_deep_work(body or "") else _WORKING_NOTES
+    previous = _LAST_NOTE.get(to)
+    choices = [n for n in pool if n != previous] or list(pool)
+    note = random.choice(choices)
+
+    _LAST_NOTE[to] = note
+    _LAST_NOTE.move_to_end(to)
+    while len(_LAST_NOTE) > _LAST_NOTE_MAX:
+        _LAST_NOTE.popitem(last=False)
+    return note
+
+
+async def _notify_if_slow(to: str, body: str = "") -> None:
+    """Send brief holding notes while a long turn runs.
+
+    Cancelled the moment the real reply is ready, so a fast answer never gets a
+    preamble. Beyond the first note the wording switches to "still on it" —
+    going quiet for a minute during deep research reads worse than the note
+    itself, and a second identical "on it" would read like a stuck machine.
+
+    A failure to send one of these must not kill the task: the reply it is
+    covering for is still on its way, and losing that to a courtesy note would
+    be a bad trade.
+    """
     try:
-        await asyncio.sleep(_SLOW_REPLY_SECONDS)
-        await sms_service.send_sms(to=to, body=_WORKING_NOTE)
+        for index, delay in enumerate(_NOTE_SCHEDULE):
+            await asyncio.sleep(delay)
+            try:
+                await sms_service.send_sms(
+                    to=to, body=_working_note(to, body, followup=index > 0)
+                )
+            except Exception as e:
+                logger.warning(f"Could not send slow-reply note: {e}")
     except asyncio.CancelledError:
         raise
-    except Exception as e:
-        logger.warning(f"Could not send slow-reply note: {e}")
 
 
 async def _process_inbound(db: AsyncSession, from_number: str, body: str, media: list) -> None:
@@ -235,7 +314,7 @@ async def _process_inbound(db: AsyncSession, from_number: str, body: str, media:
     # Download images only now that the sender is authorized (Twilio MMS only)
     images = await twilio_service.fetch_image_blocks(media) if media else []
 
-    slow_note = asyncio.create_task(_notify_if_slow(from_number))
+    slow_note = asyncio.create_task(_notify_if_slow(from_number, body))
     try:
         conversation = await claude_service.get_or_create_conversation(db, from_number)
         response_text = await claude_service.chat(
