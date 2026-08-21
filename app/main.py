@@ -105,6 +105,24 @@ async def _bootstrap_principals() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Cordia starting up", model=settings.claude_model)
+    # Log the capability surface at boot, so a version or flag mismatch is
+    # visible in the first lines of a deploy rather than at the first text.
+    try:
+        import anthropic as _anthropic
+
+        from app.prompts.prompt_profiles import get_profile
+        _p = get_profile(settings.claude_model)
+        logger.info(
+            "capabilities",
+            anthropic_sdk=_anthropic.__version__,
+            model_family=_p.family,
+            web_research=settings.enable_web_research,
+            web_search_tool=_p.web_search_version if settings.enable_web_research else None,
+            web_fetch_tool=_p.web_fetch_version if settings.enable_web_research else None,
+            outbound=settings.enable_outbound,
+        )
+    except Exception as e:
+        logger.error("capabilities_log_failed", error=str(e))
     if settings.seed_principals_on_startup:
         await _bootstrap_principals()
     if settings.seed_family_on_startup:

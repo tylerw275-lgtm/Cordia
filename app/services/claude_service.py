@@ -383,6 +383,33 @@ async def _record_turn_usage(db: AsyncSession, response, actor: str | None) -> N
         )
 
 
+async def _create_with_fallback(*, tools: list[dict], web_tools: list[dict], **kwargs):
+    """Make the request; if the *web* tools are what the API objects to, drop
+    them and try once more.
+
+    Research is an enhancement. Texting is the product. A tool definition the
+    account or model will not accept must not take down the conversation —
+    which is exactly what happened the first time these shipped: Cordia texted
+    and got "Something went wrong on my end", with the real reason only in a log
+    nobody was watching.
+
+    Only 400-class request errors are retried. A 500, a timeout or a rate limit
+    is a real outage, and quietly retrying those would just double the latency
+    before failing anyway.
+    """
+    try:
+        return await _client.messages.create(tools=tools, **kwargs), False
+    except anthropic.BadRequestError as e:
+        if not web_tools:
+            raise
+        logger.error(
+            "Anthropic rejected the request with web tools attached; retrying "
+            f"without them. Research is unavailable this turn: {e}"
+        )
+        plain = [t for t in tools if t not in web_tools]
+        return await _client.messages.create(tools=plain, **kwargs), True
+
+
 # A turn using server tools stops with pause_turn once Anthropic's internal
 # tool loop hits its iteration limit. Resuming is a bare re-request; this caps
 # how many times we will do that before answering with what we have.
@@ -448,20 +475,28 @@ async def chat(
     )
 
     messages = history + [{"role": "user", "content": user_content}]
-    tools = list(get_tool_schemas(sender_role)) + _web_tools(sender_role, profile)
+    web_tools = _web_tools(sender_role, profile)
+    tools = list(get_tool_schemas(sender_role)) + web_tools
 
     max_iterations = 10
     pause_resumes = 0
     web_errors: list[str] = []
+    research_unavailable = False
     for _ in range(max_iterations):
-        response = await _client.messages.create(
+        response, dropped_web = await _create_with_fallback(
+            tools=tools,
+            web_tools=web_tools,
             model=settings.claude_model,
             system=system,
             messages=messages,
-            tools=tools,
             max_tokens=max_tokens,
             **request_extras,
         )
+        if dropped_web:
+            # Stop offering them for the rest of the turn, and remember why.
+            tools = [t for t in tools if t not in web_tools]
+            web_tools = []
+            research_unavailable = True
 
         # Persist assistant response
         assistant_content = [block.model_dump() for block in response.content]
@@ -476,6 +511,12 @@ async def chat(
                 # Never let a failed search read as "nothing found."
                 return ("I could not reach the web to check that just now "
                         f"({', '.join(sorted(set(web_errors)))}). Ask me again in a moment.")
+            if research_unavailable and deep:
+                # Say it only where it changes how much to trust the answer. On a
+                # deep-work ask she would otherwise assume a price or a date had
+                # been looked up, when it came from memory.
+                text += ("\n\n(Heads up: I couldn't search the web for this one, so "
+                         "anything time-sensitive here is worth double-checking.)")
             return text
 
         if response.stop_reason == "pause_turn":

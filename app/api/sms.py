@@ -249,6 +249,10 @@ async def _process_inbound(db: AsyncSession, from_number: str, body: str, media:
     except Exception as e:
         slow_note.cancel()
         logger.error(f"Error processing SMS: {e}", exc_info=True)
+        # Also record it where it can be seen without shell access. The reply
+        # below is identical for every failure, so without this the only trace
+        # of what actually broke lives in a log nobody is watching.
+        await usage_service.record_error("sms_reply", e, actor=from_number)
         await sms_service.send_sms(
             to=from_number,
             body="Something went wrong on my end. Please try again in a moment.",

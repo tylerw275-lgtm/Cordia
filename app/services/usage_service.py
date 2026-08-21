@@ -221,6 +221,19 @@ async def credit_status(db: AsyncSession) -> dict:
     }
 
 
+async def record_error(where: str, exc: BaseException, actor: str | None = None) -> None:
+    """Record that something broke, so a failure is visible without shell access.
+
+    Deliberately stores the exception *type* and where it happened, never the
+    message body or the exception text — a traceback can quote the user's own
+    message straight back into a table the dashboard renders.
+    """
+    await record_standalone(
+        "error", actor=actor, cost_usd=0.0,
+        details={"where": where, "error_type": type(exc).__name__},
+    )
+
+
 async def record_email(address: str, outbound: bool) -> None:
     rate = settings.email_cost_outbound if outbound else settings.email_cost_inbound
     await record_standalone(
@@ -262,7 +275,9 @@ async def summary(db: AsyncSession, since: datetime | None = None) -> dict:
     )).first()
 
     types = {t: {"quantity": int(q or 0), "cost": float(c or 0)} for t, q, c in by_type}
-    usage_cost = sum(v["cost"] for v in types.values())
+    # Errors are recorded in the same ledger for one place to look, but they are
+    # events, not spend.
+    usage_cost = sum(v["cost"] for k, v in types.items() if k != "error")
     # The number renewal and campaign fee are charged once a month regardless of
     # traffic. `since` is only ever the start of a month, so a period query is a
     # single month's worth; an all-time query has no meaningful fixed component
@@ -279,3 +294,22 @@ async def summary(db: AsyncSession, since: datetime | None = None) -> dict:
         "fixed_cost": fixed,
         "total_cost": usage_cost + fixed,
     }
+
+
+async def recent_errors(db: AsyncSession, limit: int = 10) -> list[dict]:
+    """The last few failures, newest first, for the dashboard."""
+    rows = (await db.execute(
+        select(UsageEvent)
+        .where(UsageEvent.event_type == "error")
+        .order_by(UsageEvent.occurred_at.desc())
+        .limit(limit)
+    )).scalars().all()
+    return [
+        {
+            "when": r.occurred_at,
+            "where": (r.details or {}).get("where", "unknown"),
+            "error_type": (r.details or {}).get("error_type", "unknown"),
+            "actor": r.actor,
+        }
+        for r in rows
+    ]

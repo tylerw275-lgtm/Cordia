@@ -345,6 +345,7 @@ async def dashboard(request: Request, secret: str = "") -> HTMLResponse:
 
     # ---- what it costs ---------------------------------------------------
     usage_month = usage_all = credit = None
+    failures = []
     try:
         from datetime import timedelta
 
@@ -356,6 +357,7 @@ async def dashboard(request: Request, secret: str = "") -> HTMLResponse:
             usage_month = await usage_service.summary(db, since=month_start)
             usage_all = await usage_service.summary(db)
             credit = await usage_service.credit_status(db)
+            failures = await usage_service.recent_errors(db)
     except Exception as e:
         logger.error(f"Dashboard could not read usage: {e}")
 
@@ -492,6 +494,20 @@ nothing before this ledger existed is counted.</div>
 
     usage_section = _usage_card(usage_month, usage_all, credit)
 
+    failure_section = "" if not failures else (
+        '<div class="card"><h2>&#9888; Recent failures</h2>'
+        '<div class="note">When Cord replies &ldquo;Something went wrong on my end&rdquo;, '
+        'this is what actually broke. The message text is never stored here.</div>'
+        + _table(
+            [(_local(f["when"]), f["where"], f["error_type"],
+              _format_phone(f["actor"]) if f["actor"] and "@" not in str(f["actor"])
+              else (f["actor"] or "&mdash;"))
+             for f in failures],
+            ["When", "Where", "Error", "Who was affected"], "",
+        )
+        + "</div>"
+    )
+
     awaiting_section = "" if not awaiting else (
         '<div class="card">'
         '<h2>&#9888; Waiting for your approval</h2>'
@@ -564,6 +580,8 @@ see what they send back — ask Cord to give them circle access.</div>
       (settings.naples_email_address and settings.naples_email_app_password)
       else '<span class="pill off">not set up</span>')}
 </div>
+
+{failure_section}
 
 <div class="card">
 <h2>Who else uses Cord</h2>
