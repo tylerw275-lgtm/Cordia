@@ -496,3 +496,95 @@ async def test_the_dashboard_always_explains_how_to_add_people(db, client, mocke
     assert "Add anyone who should get their own assistant" in html
     assert 'action="/health/principals/add"' in html
     assert "PRINCIPALS_JSON is not set" in html
+
+
+# --- someone added through the FORM gets every rule, not just the seeded path -
+
+@pytest_asyncio.fixture
+async def added_by_form(db, client, mocker):
+    """Tom, created the way Tyler will actually create him — through the
+    dashboard, not PRINCIPALS_JSON. The walls key off is_owner and the grants
+    table, so they should not care how the row was made. Prove it rather than
+    assume it."""
+    from app.api import dashboard as d
+
+    mocker.patch.object(settings, "dashboard_password", "pw")
+    mocker.patch.object(settings, "principals_json", "")
+    await principal_service.add_principal(db, "Cordia", "+16155550001", "cordia@example.com")
+    cordia = await principal_service.find_by_name(db, "Cordia")
+    cordia.is_owner = True
+    await db.commit()
+
+    client.cookies.set(d._COOKIE, d._issue_session())
+    await client.post("/health/principals/add", data={
+        "name": "Tom Harrington", "phone": "+16157080001", "email": "tom@example.com",
+    }, follow_redirects=False)
+
+    return {
+        "cordia": cordia,
+        "tom": await principal_service.find_by_name(db, "Tom"),
+    }
+
+
+@pytest.mark.asyncio
+async def test_form_added_person_is_not_an_owner(db, added_by_form):
+    assert added_by_form["tom"].is_owner is False
+    assert (await principal_service.get_owner(db)).name == "Cordia"
+
+
+@pytest.mark.asyncio
+async def test_form_added_person_sees_nothing_of_cordias_by_default(db, added_by_form):
+    for scope in principal_service.SHAREABLE_SCOPES:
+        assert await principal_service.has_access(db, added_by_form["tom"], scope) is False
+
+
+@pytest.mark.asyncio
+async def test_form_added_person_cannot_read_cordias_memories(db, added_by_form):
+    await memory_service.store_memory(
+        db, category="fact", subject="Tom birthday gift",
+        content="the watch he mentioned", owner_user_id=added_by_form["cordia"].id,
+    )
+    assert await _memories_visible_to(db, added_by_form["tom"], "Tom birthday gift watch") == []
+
+
+@pytest.mark.asyncio
+async def test_form_added_person_cannot_open_cordias_project(db, added_by_form):
+    started = await pt.start_project_handler(
+        db, title="Naples house", request="packing for naples",
+        acting_user=added_by_form["cordia"],
+    )
+    seen = await pt.get_project_handler(
+        db, project_id=started["project_id"], acting_user=added_by_form["tom"]
+    )
+    assert seen["found"] is False
+
+
+@pytest.mark.asyncio
+async def test_form_added_person_is_told_the_boundary(db, added_by_form):
+    from app.services.claude_service import _build_owner_system
+
+    system = await _build_owner_system(db, "hello", None, sender_user=added_by_form["tom"])
+    text = " ".join(b["text"] for b in system).lower()
+
+    assert "tom harrington" in text
+    assert "their own workspace" in text
+    assert "off limits" in text
+
+
+@pytest.mark.asyncio
+async def test_adding_by_form_does_not_grant_sms_consent(db, added_by_form):
+    """Being set up is not consent. Cord still cannot text them first."""
+    from app.services import consent_service
+
+    assert await consent_service.is_approved(db, "+16157080001") is False
+    assert await consent_service.status_for(db, "+16157080001") == "no_consent"
+
+
+@pytest.mark.asyncio
+async def test_sharing_still_has_to_be_deliberate_for_a_form_added_person(db, added_by_form):
+    await st.share_with_handler(
+        db, person="Tom", what="loyalty", acting_user=added_by_form["cordia"]
+    )
+    assert await principal_service.has_access(db, added_by_form["tom"], "loyalty") is True
+    # And only that one area.
+    assert await principal_service.has_access(db, added_by_form["tom"], "memories") is False
