@@ -26,7 +26,9 @@ CONTEXT_KEYWORDS = {
     "trip_planning": ["flight", "fly", "hotel", "trip", "travel", "airport", "book", "vacation", "thanksgiving", "cruise"],
     "event_planning": ["party", "comedy", "event", "gala", "fundraiser", "dinner party", "host", "celebration", "show", "night out"],
     "family_coordination": ["family", "gather", "birthday", "anniversary", "schedule", "get together", "grandkids", "reunion"],
-    "lease_review": ["lease", "rent", "tenant", "landlord", "clause", "renewal", "property", "contract"],
+    "lease_review": ["lease", "rent", "tenant", "landlord", "clause", "renewal", "property",
+                     "contract", "negotiate", "good deal", "square feet", "cam", "escalation",
+                     "guarantee", "sublet", "build-out", "buildout", "tenant improvement"],
 }
 
 
