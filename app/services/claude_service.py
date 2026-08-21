@@ -359,6 +359,28 @@ def _collect_web_errors(blocks: list) -> list[str]:
     return errors
 
 
+def _dispatch_extras(handler, sender_role: str, sender_member: Any, sender_user: Any) -> dict:
+    """The context a handler is called with, beyond its own tool input.
+
+    Family handlers always take the member — they cannot do their job without
+    knowing who is asking. Actor context for a principal is **opt-in**: handlers
+    all take **kw so anything passed here binds cleanly, and several forward
+    **kwargs straight into strictly-typed callees. Passing `acting_user` to
+    everything therefore made memory, family creation, calendar capture and
+    flight search raise TypeError, which the loop caught and turned into a
+    silent `{"error": ...}` for six deploys.
+
+    It lives in a named function so the tests can call the real thing. When they
+    re-implemented this rule instead, the rule stayed green while the dispatcher
+    around it went wrong.
+    """
+    if sender_role == "family":
+        return {"acting_member": sender_member}
+    if getattr(handler, "wants_actor", False):
+        return {"acting_user": sender_user}
+    return {}
+
+
 async def _record_turn_usage(db: AsyncSession, response, actor: str | None) -> None:
     """Bill one API request: tokens always, plus any server-tool calls it made.
 
@@ -573,21 +595,9 @@ async def chat(
                         result = {"error": f"Unknown tool: {block.name}"}
                     else:
                         try:
-                            if sender_role == "family":
-                                result = await handler(db=db, acting_member=sender_member, **block.input)
-                            else:
-                                # Actor context goes ONLY to handlers that opted
-                                # in via @wants_actor. Passing it to everything
-                                # looked harmless — handlers all take **kw — but
-                                # several forward **kwargs straight into typed
-                                # functions, so memory, family, calendar and
-                                # flight search all raised TypeError and the
-                                # except below turned it into a silent
-                                # {"error": ...}. Opt-in means a future
-                                # dispatcher argument cannot repeat that.
-                                extra = ({"acting_user": sender_user}
-                                         if getattr(handler, "wants_actor", False) else {})
-                                result = await handler(db=db, **extra, **block.input)
+                            extra = _dispatch_extras(handler, sender_role,
+                                                     sender_member, sender_user)
+                            result = await handler(db=db, **extra, **block.input)
                         except Exception as e:
                             logger.error(f"Tool {block.name} error: {e}")
                             result = {"error": str(e)}

@@ -24,6 +24,7 @@ import uuid
 import pytest
 
 from app.config import settings
+from app.services.claude_service import _dispatch_extras
 from app.tools.registry import get_handler, get_tool_schemas
 
 _ALL_FLAGS = (
@@ -95,8 +96,9 @@ async def test_every_owner_tool_is_callable_through_the_dispatcher(db, tool_name
     handler = get_handler(tool_name, "owner")
     assert handler is not None, f"{tool_name} is registered with no handler"
 
-    # Exactly what claude_service.chat() does for a principal.
-    extra = {"acting_user": None} if getattr(handler, "wants_actor", False) else {}
+    # The dispatcher's own decision, not a copy of it: re-implementing the rule
+    # here meant this file stayed green while chat() went wrong.
+    extra = _dispatch_extras(handler, "owner", None, None)
 
     try:
         result = await handler(db=db, **extra, **_sample_input(_OWNER_TOOLS[tool_name]))
@@ -126,10 +128,11 @@ async def test_every_family_tool_is_callable_through_the_dispatcher(db, tool_nam
     handler = get_handler(tool_name, "family")
     assert handler is not None, f"{tool_name} is registered with no handler"
 
+    extra = _dispatch_extras(handler, "family", member, None)
+    assert extra == {"acting_member": member}
+
     try:
-        result = await handler(
-            db=db, acting_member=member, **_sample_input(_FAMILY_TOOLS[tool_name])
-        )
+        result = await handler(db=db, **extra, **_sample_input(_FAMILY_TOOLS[tool_name]))
     except Exception as e:
         pytest.fail(f"{tool_name} raised {type(e).__name__}: {e}")
 
@@ -142,7 +145,11 @@ async def test_every_family_tool_is_callable_through_the_dispatcher(db, tool_nam
 async def test_a_handler_that_did_not_opt_in_never_sees_actor_context(db):
     from app.tools import memory_tools
 
-    assert getattr(get_handler("store_memory", "owner"), "wants_actor", False) is False
+    handler = get_handler("store_memory", "owner")
+    assert getattr(handler, "wants_actor", False) is False
+    assert _dispatch_extras(handler, "owner", None, object()) == {}, (
+        "the dispatcher handed actor context to a handler that never asked for it"
+    )
 
     # And it genuinely cannot survive being handed one — which is why the
     # dispatcher must not hand it out uninvited.
@@ -158,7 +165,9 @@ async def test_a_handler_that_did_not_opt_in_never_sees_actor_context(db):
 def test_handlers_that_scope_by_principal_declare_it(tool_name):
     """These read per-principal data. Losing the marker would silently stop the
     workspace walls being enforced rather than raising anything."""
-    assert getattr(get_handler(tool_name, "owner"), "wants_actor", False), (
+    handler = get_handler(tool_name, "owner")
+    sentinel = object()
+    assert _dispatch_extras(handler, "owner", None, sentinel) == {"acting_user": sentinel}, (
         f"{tool_name} lost its actor context"
     )
 
