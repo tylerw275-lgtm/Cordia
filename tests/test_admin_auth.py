@@ -46,8 +46,12 @@ async def test_header_secret_grants_access(client, admin_secret):
 
 
 @pytest.mark.asyncio
-async def test_query_secret_grants_access(client, admin_secret):
-    assert (await client.get(f"/api/v1/family?secret={SECRET}")).status_code == 200
+async def test_query_secret_no_longer_grants_access(client, admin_secret):
+    """Reversed deliberately. A secret in a URL is written to every access log
+    it passes through, and using the dashboard was leaking the admin secret into
+    Railway's log retention on every visit. Scripts use the header; the browser
+    uses the dashboard session."""
+    assert (await client.get(f"/api/v1/family?secret={SECRET}")).status_code == 401
 
 
 @pytest.mark.asyncio

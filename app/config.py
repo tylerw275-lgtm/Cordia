@@ -126,12 +126,19 @@ class Settings(BaseSettings):
     # $1.00. Shown separately so sunk cost never inflates a month's total.
     setup_cost_to_date: float = 22.00
 
-    # Signal House runs on prepaid credit. Spend-to-date is on the dashboard
-    # already; the number actually worth knowing is when a top-up is due.
-    signalhouse_credit_purchased: float = 75.00
-    # Messaging spend that predates this ledger, from the invoice. Without it
-    # the remaining balance would read high by exactly this much.
-    signalhouse_spend_before_ledger: float = 3.167
+    # Signal House runs on prepaid credit: $50 bought plus a $75 review credit.
+    # Spend-to-date is on the dashboard already; the number actually worth
+    # knowing is when a top-up is due.
+    signalhouse_credit_purchased: float = 125.00
+    # EVERYTHING Signal House had charged before this ledger existed — setup
+    # ($22.00: brand, campaign, number) plus messaging ($3.19). All of it draws
+    # down the same balance, so counting only messaging would read high by the
+    # setup. 125.00 - 25.19 = 99.81, which matches the account.
+    #
+    # Re-sync this from the invoice occasionally: the monthly number renewal is
+    # charged by Signal House but not recorded in this ledger, so the remaining
+    # figure drifts high by about $1 a month between syncs.
+    signalhouse_spend_before_ledger: float = 25.19
 
     # Live web research via Anthropic's server-side search/fetch tools. Costs
     # ~$0.01 per search on top of tokens, so the per-turn ceilings are config.

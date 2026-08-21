@@ -199,8 +199,9 @@ at cordia.aigenpartners.com; the opt-in page carries the consent form itself.
   Separate, **restricted** system prompt + toolset for family-circle members
   (`sender_role="family"`).
 - **Access control:** the data APIs (`/api/v1/*`, `/health/config`, `/health/data`) are
-  gated on `ADMIN_API_SECRET` (`X-Admin-Secret` header or `?secret=`) and fail closed
-  when it's unset. Webhooks keep their own verification; `/health` and the compliance
+  gated on `ADMIN_API_SECRET` (`X-Admin-Secret` header) or a valid dashboard session,
+  and fail closed when neither is present. **No `?secret=` query param** — a secret in a
+  URL is written to every access log it passes through. Webhooks keep their own verification; `/health` and the compliance
   pages stay public. The OpenAPI schema and `/docs` are disabled.
 - **Flights:** Duffel API (`search_flights`, `get_offer`, `create_link_session`,
   `get_order`); booking webhook `POST /webhook/duffel` (HMAC-verified) + `/booking/*`

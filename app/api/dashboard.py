@@ -92,11 +92,26 @@ def _session_valid(token: str | None) -> bool:
     return int(expires) > time.time()
 
 
+def session_is_valid(request: Request) -> bool:
+    """Whether this request carries a live dashboard session.
+
+    Public because the admin data routes accept it too — that is what lets the
+    dashboard link to them without putting a secret in the URL.
+    """
+    return _session_valid(request.cookies.get(_COOKIE))
+
+
 def _authorized(request: Request) -> bool:
-    """A valid session cookie, or the admin secret for scripted access."""
-    if _session_valid(request.cookies.get(_COOKIE)):
+    """A valid session cookie, or the admin secret in a *header*.
+
+    Deliberately no ``?secret=`` query param. A secret in a URL is recorded by
+    every access log it passes through, so opening the dashboard was writing the
+    admin secret into log retention on every visit. Headers are not logged, so
+    scripted access still works.
+    """
+    if session_is_valid(request):
         return True
-    supplied = request.query_params.get("secret") or request.headers.get("X-Admin-Secret") or ""
+    supplied = request.headers.get("X-Admin-Secret") or ""
     return bool(settings.admin_api_secret) and hmac.compare_digest(
         supplied.encode(), settings.admin_api_secret.encode()
     )
@@ -236,7 +251,7 @@ def _row(label: str, value: str) -> str:
 
 
 @router.get("/dashboard", include_in_schema=False)
-async def dashboard(request: Request, secret: str = "") -> HTMLResponse:
+async def dashboard(request: Request) -> HTMLResponse:
     if not _authorized(request):
         return HTMLResponse(_LOGIN_PAGE.format(style=_STYLE, error=""), status_code=401)
     from datetime import datetime, timezone
@@ -306,8 +321,11 @@ async def dashboard(request: Request, secret: str = "") -> HTMLResponse:
         if opted_out_at:
             opted_out.append(entry)
         elif status == "rejected":
-            rejected.append(entry[:4] + (_decide_buttons(phone).replace(
-                '<button name="decision" value="rejected" class="btn-no">Reject</button>', ''),))
+            # Off the screen once she has decided — she asked for them gone, and
+            # a growing list of blocked numbers is noise, not information. The
+            # consent row itself is untouched: it is the legal evidence and is
+            # never deleted, only ignored for access.
+            rejected.append(entry[:2])
         elif status != "approved":
             awaiting.append(entry[:4] + (_decide_buttons(phone),))
         elif name:
@@ -519,7 +537,6 @@ nothing before this ledger existed is counted.</div>
         + "</div>"
     )
 
-    q = f"?secret={secret}" if secret else ""
     now = _local(datetime.now(timezone.utc)) + f" ({settings.scheduler_timezone.split('/')[-1].replace('_', ' ')})"
 
     html = f"""<!DOCTYPE html>
@@ -544,9 +561,6 @@ see what they send back — ask Cord to give them circle access.</div>
  f'Call or text it to find out who it is, then either add that number to their '
  f'profile (so Cord can text them) or ignore it if it was a test.'
  f'{_table(unmatched, ["Name", "Number", "How", "Date", ""], "")}</div>' if unmatched else ''}
-{f'<div class="note"><strong>Rejected.</strong> You blocked these numbers. Their '
- f'consent record is kept as required proof, but they can never reach Cord.'
- f'{_table(rejected, ["Name they gave", "Number", "How", "Signed", ""], "")}</div>' if rejected else ''}
 {f'<div class="note"><strong>Opted out.</strong> Cord will never text these numbers.'
  f'{_table(opted_out, ["Name", "Number", "How", "Date", ""], "")}</div>' if opted_out else ''}
 </div>
@@ -617,9 +631,9 @@ one thing without giving standing access, she asks Cord to let them know.</div>
 <div class="card">
 <h2>Run a test</h2>
 <div class="actions">
-<a href="/health/test-email{q}">Send a test email</a>
-<a href="/health/test-flights{q}">Search live flights</a>
-<a class="secondary" href="/health/config{q}">Raw configuration</a>
+<a href="/health/test-email">Send a test email</a>
+<a href="/health/test-flights">Search live flights</a>
+<a class="secondary" href="/health/config">Raw configuration</a>
 <a class="secondary" href="/health/logout">Sign out</a>
 </div>
 </div>

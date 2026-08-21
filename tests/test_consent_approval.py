@@ -175,3 +175,55 @@ async def test_stop_still_works_for_an_unapproved_number(db, client, mocker):
     assert r.status_code == 200
     assert send.called, "STOP was not acknowledged"
     assert await consent_service.status_for(db, STRANGER) == "opted_out"
+
+
+# --- rejected people come off the dashboard --------------------------------
+
+@pytest.mark.asyncio
+async def test_a_rejected_number_disappears_from_the_dashboard(db, client, mocker):
+    """She asked for them gone once she has decided — a growing list of blocked
+    numbers is noise. The consent row stays as the legal record."""
+    from sqlalchemy import text as sa_text
+
+    from app.api import dashboard as d
+    from app.config import settings as cfg
+
+    mocker.patch.object(cfg, "dashboard_password", "pw")
+    await _sign(db, STRANGER, name="Unknown Caller")
+
+    client.cookies.set(d._COOKIE, d._issue_session())
+    before = (await client.get("/health/dashboard")).text
+    assert "(787) 676-5645" in before, "a pending number should be visible to decide on"
+
+    await consent_service.set_status(db, STRANGER, "rejected")
+    after = (await client.get("/health/dashboard")).text
+
+    assert "(787) 676-5645" not in after
+    assert "Unknown Caller" not in after
+
+    # Gone from the screen, still on file — this is compliance evidence.
+    row = (await db.execute(
+        sa_text("SELECT approval_status, consented_at FROM sms_consent WHERE phone = :p"),
+        {"p": STRANGER},
+    )).first()
+    assert row.approval_status == "rejected"
+    assert row.consented_at is not None
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_number_never_slips_into_who_cord_can_text(db, client, mocker):
+    """Hiding them must not mean losing track of them: a rejected number that
+    fell through the classification would land in the 'can text' table."""
+    from app.api import dashboard as d
+    from app.config import settings as cfg
+
+    mocker.patch.object(cfg, "dashboard_password", "pw")
+    await _sign(db, STRANGER, name="Unknown Caller")
+    await consent_service.set_status(db, STRANGER, "rejected")
+
+    client.cookies.set(d._COOKIE, d._issue_session())
+    html = (await client.get("/health/dashboard")).text
+
+    assert "Who Cord can text" in html
+    assert "5645" not in html
+    assert await consent_service.is_approved(db, STRANGER) is False
