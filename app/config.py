@@ -68,6 +68,11 @@ class Settings(BaseSettings):
     # with the SMS vendor. Unset means those routes are denied, not open.
     admin_api_secret: str = ""
 
+    # Fernet key encrypting loyalty account numbers at rest. Generate with:
+    #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    # Unset means loyalty numbers cannot be stored at all (fails closed).
+    loyalty_encryption_key: str = ""
+
     enable_flight_search: bool = True
     enable_lease_review: bool = True
     enable_family_coordination: bool = True

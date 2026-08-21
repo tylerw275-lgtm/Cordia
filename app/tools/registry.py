@@ -1,7 +1,12 @@
 from typing import Callable
 
 from app.config import settings
-from app.tools import calendar_tools, email_tools, family_circle_tools, family_tools, feature_tools, lease_tools, memory_tools
+from app.tools import calendar_tools, email_tools, family_circle_tools, family_tools, feature_tools, lease_tools, loyalty_tools, memory_tools
+
+
+def _roster_schemas() -> list[dict]:
+    from app.tools import contact_tools
+    return [t for t in contact_tools.TOOL_SCHEMAS if t["name"] == "list_sms_roster"]
 
 # Always-on tools (owner / Cordia)
 _BASE_TOOLS: list[dict] = [
@@ -10,6 +15,11 @@ _BASE_TOOLS: list[dict] = [
     *calendar_tools.TOOL_SCHEMAS,
     *family_circle_tools.OWNER_TOOL_SCHEMAS,
     *feature_tools.TOOL_SCHEMAS,
+    *loyalty_tools.TOOL_SCHEMAS,
+    # Read-only view of who has consented to texts. Deliberately outside the
+    # enable_outbound gate: Cordia can ask who she's allowed to text long
+    # before Cord is allowed to send anything.
+    *[t for t in _roster_schemas()],
 ]
 
 _BASE_HANDLERS: dict[str, Callable] = {
@@ -26,7 +36,16 @@ _BASE_HANDLERS: dict[str, Callable] = {
     "list_events_by_location": calendar_tools.list_events_by_location_handler,
     **family_circle_tools.OWNER_EXTRA_HANDLERS,
     **feature_tools.HANDLERS,
+    **loyalty_tools.HANDLERS,
 }
+
+
+def _roster_handler():
+    from app.tools import contact_tools
+    return contact_tools.HANDLERS["list_sms_roster"]
+
+
+_BASE_HANDLERS["list_sms_roster"] = _roster_handler()
 
 
 # Tools available when the model is reading THIRD-PARTY content (an email from

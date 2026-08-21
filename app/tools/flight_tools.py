@@ -4,7 +4,7 @@ from datetime import date
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.services import duffel_service, travel_prefs
+from app.services import duffel_service, loyalty_service, travel_prefs
 
 PREFERENCE_TOOL_SCHEMAS = [
     {
@@ -162,9 +162,15 @@ async def search_flights_handler(db: AsyncSession, **kwargs) -> dict:
     max_results = kwargs.pop("max_results", 5)
     if prefs.get("cabin") and "cabin" not in kwargs:
         kwargs["cabin"] = prefs["cabin"]
+    # Her airline memberships ride along so fares reflect status and miles
+    # accrue. Numbers are decrypted inside the service and handed straight to
+    # Duffel — they are never returned to the model.
+    loyalty = await loyalty_service.duffel_loyalty_accounts(db)
     # Pull a wider pool so preference filtering still leaves enough options
     try:
-        flights = await duffel_service.search_flights(max_results=max(max_results * 3, 15), **kwargs)
+        flights = await duffel_service.search_flights(
+            max_results=max(max_results * 3, 15), loyalty_accounts=loyalty or None, **kwargs
+        )
     except duffel_service.DuffelUnavailable:
         return {
             "found": False,
@@ -182,6 +188,7 @@ async def search_flights_handler(db: AsyncSession, **kwargs) -> dict:
         "found": True,
         "flights": matching[:max_results],
         "count": len(matching[:max_results]),
+        "loyalty_applied": [a["airline_iata_code"] for a in loyalty],
         "preferences_applied": {
             "nonstop_preferred": prefs.get("nonstop_preferred", True),
             "priority": prefs.get("priority"),
@@ -316,6 +323,7 @@ async def check_watched_price_now_handler(db: AsyncSession, **kwargs) -> dict:
                 depart_date=w.depart_date.isoformat(),
                 return_date=w.return_date.isoformat() if w.return_date else None,
                 adults=w.num_adults, cabin=w.cabin_class, max_results=5,
+                loyalty_accounts=await loyalty_service.duffel_loyalty_accounts(db) or None,
             )
             if not offers:
                 return {"found": False, "message": "No fares came back for that route right now."}

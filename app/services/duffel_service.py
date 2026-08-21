@@ -163,15 +163,24 @@ async def search_flights(
     adults: int = 1,
     cabin: str = "ECONOMY",
     max_results: int = 10,
+    loyalty_accounts: list[dict] | None = None,
 ) -> list[dict]:
+    """Search offers. `loyalty_accounts` is Duffel's
+    [{airline_iata_code, account_number}] — attaching them surfaces status
+    benefits and earns miles. If Duffel rejects the request *with* them, the
+    search is retried without: a stale membership number must never cost
+    Cordia her flight results."""
     slices = [{"origin": origin.upper(), "destination": destination.upper(), "departure_date": depart_date}]
     if return_date:
         slices.append({"origin": destination.upper(), "destination": origin.upper(), "departure_date": return_date})
 
+    passenger = {"type": "adult"}
+    if loyalty_accounts:
+        passenger["loyalty_programme_accounts"] = loyalty_accounts
     payload = {
         "data": {
             "slices": slices,
-            "passengers": [{"type": "adult"} for _ in range(adults)],
+            "passengers": [dict(passenger) for _ in range(adults)],
             "cabin_class": _cabin(cabin),
             "return_offers": True,
         }
@@ -189,5 +198,13 @@ async def search_flights(
             offers.sort(key=lambda o: float(o["total_amount"]))
             return [_normalize_offer(o) for o in offers[:max_results]]
     except Exception as e:
+        if loyalty_accounts:
+            # Retry without the memberships rather than returning nothing.
+            logger.warning(f"Duffel search failed with loyalty accounts attached ({e}); retrying without")
+            return await search_flights(
+                origin=origin, destination=destination, depart_date=depart_date,
+                return_date=return_date, adults=adults, cabin=cabin,
+                max_results=max_results, loyalty_accounts=None,
+            )
         logger.error(f"Duffel search_flights error: {e}")
         raise DuffelUnavailable(str(e)) from e

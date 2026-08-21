@@ -7,6 +7,7 @@ from app.models.family import (
     FamilyRequest,
     GrandkidActivity,
 )
+from app.models.loyalty import LoyaltyAccount
 from app.models.memory import Memory
 from app.models.outbound import OutboundMessage
 from app.models.real_estate import Lease, LeaseClause, LeaseReminder
@@ -25,6 +26,7 @@ __all__ = [
     "Lease",
     "LeaseClause",
     "LeaseReminder",
+    "LoyaltyAccount",
     "Memory",
     "Message",
     "OutboundMessage",
