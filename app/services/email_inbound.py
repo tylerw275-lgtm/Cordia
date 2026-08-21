@@ -44,6 +44,33 @@ def strip_quoted(body: str) -> str:
     return "\n".join(kept).strip() or body.strip()
 
 
+_BLOCK_END_RE = re.compile(r"</(?:p|div|br|tr|h[1-6]|li)\s*>|<br\s*/?>", re.IGNORECASE)
+_TAG_RE = re.compile(r"<[^>]+>")
+_DROP_RE = re.compile(r"<(script|style)\b.*?</\1>", re.IGNORECASE | re.DOTALL)
+
+
+def html_to_text(html: str) -> str:
+    """Crude HTML -> text, for inbound mail that carries no plain-text part.
+
+    Deliberately dependency-free: the result is read by a language model, not
+    rendered, so structural fidelity matters far less than keeping the words and
+    the line breaks. Scripts and styles are dropped rather than flattened into
+    the body, where they would be noise at best.
+    """
+    if not html:
+        return ""
+    text = _DROP_RE.sub(" ", html)
+    text = _BLOCK_END_RE.sub("\n", text)
+    text = _TAG_RE.sub("", text)
+    for entity, char in (
+        ("&nbsp;", " "), ("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"),
+        ("&quot;", '"'), ("&#39;", "'"), ("&apos;", "'"),
+    ):
+        text = text.replace(entity, char)
+    lines = [line.strip() for line in text.split("\n")]
+    return "\n".join(line for line in lines if line).strip()
+
+
 def _mask(addr: str) -> str:
     local, _, domain = (addr or "").partition("@")
     return f"{local[:1]}****@{domain}" if domain else "****"

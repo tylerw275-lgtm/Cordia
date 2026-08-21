@@ -139,3 +139,36 @@ async def _send_resend(to: str, subject: str, html: str, text: str) -> dict:
     except Exception as e:
         logger.error(f"Resend send_email error: {e}")
         return {"sent": False, "reason": str(e)}
+
+
+class ReceivedEmailUnavailable(RuntimeError):
+    """The message metadata arrived but its content could not be fetched.
+
+    Raised rather than returned so the webhook can answer 500 and let Resend
+    retry. Returning an empty body instead would look identical to a genuinely
+    empty message and the reply would be dropped silently — which is exactly
+    the bug this fetch exists to fix.
+    """
+
+
+async def fetch_received_email(email_id: str) -> dict:
+    """Fetch one inbound message's content from Resend.
+
+    Resend's `email.received` webhook deliberately carries metadata only —
+    `email_id`, `from`, `to`, `subject` — so the body has to be fetched by id.
+    Returns the decoded payload; `text` holds the plain body, `html` the rich
+    one (either may be null, never both).
+    """
+    if not settings.email_api_key:
+        raise ReceivedEmailUnavailable("EMAIL_API_KEY is not set")
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                f"https://api.resend.com/emails/receiving/{email_id}",
+                headers={"Authorization": f"Bearer {settings.email_api_key}"},
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as e:
+        logger.error(f"Could not fetch received email {email_id}: {e}")
+        raise ReceivedEmailUnavailable(str(e)) from e

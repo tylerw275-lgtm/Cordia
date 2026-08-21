@@ -13,10 +13,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.config import settings
-from app.services import email_inbound
+from app.services import email_inbound, email_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# Generous enough for a forwarded document, small enough that one message
+# cannot dominate a turn.
+_MAX_BODY_CHARS = 50_000
 
 
 # Resend signs webhooks with the Svix scheme: the signed payload is
@@ -110,6 +114,27 @@ async def receive_email(request: Request, db: AsyncSession = Depends(get_db)) ->
     sender = email_inbound.extract_email(payload.get("from") or payload.get("sender") or payload.get("From"))
     subject = _first(payload, "subject", "Subject")
     body = _first(payload, "text", "plain", "body-plain", "stripped-text", "TextBody", "body")
+
+    # Resend's email.received carries metadata ONLY — no body, by design (so a
+    # large attachment can't blow past a serverless request limit). Without this
+    # fetch the body is always "", process_inbound_email returns
+    # "ignored_empty_body", and every reply is dropped while the webhook reports
+    # a clean 200. Other providers post the body inline, so only fetch when it
+    # is actually missing.
+    email_id = _first(payload, "email_id", "id")
+    if not body and email_id:
+        try:
+            fetched = await email_service.fetch_received_email(email_id)
+        except email_service.ReceivedEmailUnavailable as e:
+            # 500, not 200: this message is real and retryable. Acknowledging it
+            # would discard someone's email permanently.
+            logger.error(f"Inbound email {email_id} metadata arrived but content did not: {e}")
+            return JSONResponse(status_code=500, content={"status": "content_fetch_failed"})
+        # Cap the fetched body: an inbound message is attacker-influenced input
+        # and this is the one path where its full length reaches a model turn.
+        body = (fetched.get("text") or email_inbound.html_to_text(fetched.get("html") or ""))[:_MAX_BODY_CHARS]
+        sender = sender or email_inbound.extract_email(fetched.get("from"))
+        subject = subject or str(fetched.get("subject") or "")
 
     # The status is echoed back in the 200 body so it appears in the provider's
     # webhook log — "ignored_unknown_sender" there is far easier to act on than
