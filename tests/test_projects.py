@@ -277,3 +277,64 @@ async def test_listing_shows_what_is_still_waiting_on_her(db):
 
     only_intake = await pt.list_projects_handler(db, status="intake")
     assert [p["title"] for p in only_intake["projects"]] == ["NYC evening"]
+
+
+# --- scope before parameters ------------------------------------------------
+#
+# "What should I pack for the Naples house" produced 200 lines of linens,
+# cookware and hurricane supplies, and not one item of clothing. She meant her
+# suitcase. Every intake question was answered correctly and the deliverable
+# still missed, because every question gathered *parameters of a task already
+# assumed* and nothing asked what was being asked for.
+
+def test_scope_is_the_first_thing_the_interview_settles():
+    assert playbooks.INTAKE_DIMENSIONS[0][0] == "scope"
+
+
+def test_the_scope_axis_names_the_ambiguity_that_caused_this():
+    _, description = playbooks.INTAKE_DIMENSIONS[0]
+    assert "pack" in description.lower()
+    assert "suitcase" in description.lower()
+
+
+def test_place_setup_asks_clothes_or_furnishings_first():
+    first = playbooks.PLAYBOOKS["place_setup"]["intake_questions"][0].lower()
+    assert "clothes" in first
+    assert "outfitting" in first or "place itself" in first
+
+
+def test_place_setup_asks_what_is_already_handled_not_just_furnished():
+    """She had already had a car driven down. Asking only about furniture never
+    surfaces that."""
+    questions = " ".join(playbooks.PLAYBOOKS["place_setup"]["intake_questions"]).lower()
+    assert "already handled" in questions or "already" in questions
+    assert "car" in questions
+
+
+def test_the_output_template_covers_only_what_was_in_scope():
+    template = playbooks.PLAYBOOKS["place_setup"]["output_template"].lower()
+    assert "only what she said was in scope" in template
+    assert "clothing" in template
+
+
+def test_the_output_template_requires_a_source_beside_a_named_shop():
+    """The deliverable named Clive Daniel Home and Total Wine on Airport Road
+    with nothing behind them."""
+    template = playbooks.PLAYBOOKS["place_setup"]["output_template"].lower()
+    assert "source" in template
+
+
+def test_a_derived_interview_settles_scope_first_too():
+    """The generalising path needs the same discipline as the stock one."""
+    brief = playbooks.QUESTION_DESIGN_BRIEF.format(dimensions=playbooks.dimensions_text())
+    assert "scope axis first" in brief.lower()
+    assert "scope" in brief.lower()
+
+
+@pytest.mark.asyncio
+async def test_the_naples_ask_now_leads_with_the_scope_question(db):
+    started = await _start(db, "Naples condo", "what should I pack for the naples house")
+
+    assert started["kind"] == "place_setup"
+    first = started["intake_questions"][0].lower()
+    assert "clothes" in first, "the ambiguity that produced the wrong answer is unasked"

@@ -16,6 +16,11 @@ and forgetting them is what makes an answer generic.
 # The axes that almost always change an answer and are easy to forget. Cord
 # walks these to build an interview for an ask no playbook anticipated.
 INTAKE_DIMENSIONS = [
+    ("scope", "What is actually being asked for. If a word in the request carries "
+              "two materially different readings — 'pack' meaning her suitcase or "
+              "meaning outfitting the house, 'set up' meaning furniture or meaning "
+              "utilities — settle which one FIRST. Every other question is wasted "
+              "if it is aimed at the wrong target."),
     ("place", "Where. Climate through the year, seasonality, local norms and dress, "
               "what is cheap to buy there versus worth shipping or bringing."),
     ("time", "When. Exact dates and times, lead time, deadlines, how long it lasts, "
@@ -43,8 +48,10 @@ def dimensions_text() -> str:
 # and inspectable as a pre-written one.
 QUESTION_DESIGN_BRIEF = """No stock interview covers this ask, so design one.
 
-Work through these axes and keep only the ones that would genuinely change your
-answer for THIS request:
+Settle the scope axis FIRST — an interview aimed at the wrong reading of the
+request produces a flawless answer to a question she did not ask. Then work
+through the rest and keep only the ones that would genuinely change your answer
+for THIS request:
 
 {dimensions}
 
@@ -72,11 +79,16 @@ PLAYBOOKS: dict[str, dict] = {
             "locally — not on a generic checklist of household goods."
         ),
         "intake_questions": [
+            # Scope first. "What should I pack" produced a 200-line list of
+            # linens and cookware when she meant her suitcase — every other
+            # answer was correct and the deliverable still missed.
+            "First, what are we covering — clothes to bring for the season, "
+            "outfitting the place itself, or both?",
             "How big is the place, and what kind is it — beachfront, condo, in town, on a course?",
-            "What's already there? Furnished, partly furnished, or empty?",
+            "What's already there or already handled? Furnishings, appliances, a car, "
+            "anything shipped down already?",
             "What will you mostly be doing there — hosting people, quiet time, going out, or a mix?",
             "Which months will you actually be in residence, and who visits?",
-            "Anything you'd rather buy there than ship, or vice versa?",
         ],
         "research_checklist": [
             "Climate through the year, month by month — heat, humidity, rainy season, storm season",
@@ -86,9 +98,13 @@ PLAYBOOKS: dict[str, dict] = {
             "Anything specific to this kind of property in this place",
         ],
         "output_template": (
-            "Organised room by room or area by area. For each item say why it is on the "
-            "list — the climate or use reason — and mark whether to bring it or buy it "
-            "there. Call out anything seasonal or time-sensitive separately."
+            "Cover only what she said was in scope. If it is clothing, organise by "
+            "occasion — days on the course, dinners out, beach, travel — with the "
+            "local dress norms behind each call. If it is outfitting the place, "
+            "organise room by room. For each item say why it is on the list, the "
+            "climate or use reason, and whether to bring it or buy it there. Name a "
+            "specific shop or street only with the source you found it in — she may "
+            "drive there on the strength of it."
         ),
     },
     "service_sourcing": {
