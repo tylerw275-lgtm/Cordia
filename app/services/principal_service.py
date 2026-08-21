@@ -148,6 +148,83 @@ async def seed_principals(db: AsyncSession) -> int:
     return added
 
 
+async def add_principal(
+    db: AsyncSession, name: str, phone: str | None = None, email: str | None = None,
+) -> tuple[AuthorizedUser | None, str]:
+    """Add someone by hand, from the dashboard. Returns (user, outcome).
+
+    Requires at least one contact route. A principal with neither a phone nor an
+    email can never be resolved from an inbound message or reached by one, so
+    accepting it would create a row that looks right on the page and does
+    nothing at all.
+
+    Never mints an owner: there is exactly one account holder and this form is
+    not how she would be replaced.
+    """
+    name = (name or "").strip()
+    phone = (phone or "").strip() or None
+    email = (email or "").strip().lower() or None
+
+    if not name:
+        return None, "no_name"
+    if not phone and not email:
+        return None, "no_contact_route"
+
+    existing = None
+    if phone:
+        existing = await resolve_by_phone(db, phone)
+    if existing is None and email:
+        existing = await resolve_by_email(db, email)
+
+    if existing is not None:
+        # Fill in what's missing rather than creating a second row for the same
+        # person — a duplicate would split their conversation history in two.
+        existing.name = name[:120] or existing.name
+        existing.phone = phone or existing.phone
+        existing.email = email or existing.email
+        existing.is_active = True
+        await db.commit()
+        return existing, "updated"
+
+    user = AuthorizedUser(name=name[:120], phone=phone, email=email, is_owner=False)
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    logger.info(f"Added principal {user.name}")
+    return user, "added"
+
+
+async def set_active(db: AsyncSession, user_id, active: bool) -> bool:
+    """Turn someone's access off without deleting them.
+
+    Deactivating rather than deleting keeps their conversation history and any
+    grants coherent, and resolve_by_phone/email already filter on is_active, so
+    an inactive principal simply stops being recognised.
+    """
+    user = (await db.execute(
+        select(AuthorizedUser).where(AuthorizedUser.id == user_id)
+    )).scalars().first()
+    if user is None or user.is_owner:
+        return False
+    user.is_active = active
+    await db.commit()
+    return True
+
+
+def config_health() -> tuple[str, str]:
+    """(status, human explanation) for PRINCIPALS_JSON — malformed JSON otherwise
+    only ever appears in a boot log."""
+    if not settings.principals_json:
+        return "unset", "PRINCIPALS_JSON is not set in Railway."
+    try:
+        parsed = json.loads(settings.principals_json)
+    except json.JSONDecodeError as e:
+        return "invalid", f"PRINCIPALS_JSON is not valid JSON ({e.msg} at position {e.pos})."
+    if not isinstance(parsed, list):
+        return "invalid", "PRINCIPALS_JSON must be a list of people."
+    return "ok", f"PRINCIPALS_JSON holds {len(parsed)} entr{'y' if len(parsed) == 1 else 'ies'}."
+
+
 # ---------------------------------------------------------------------------
 # Access
 # ---------------------------------------------------------------------------

@@ -41,6 +41,14 @@ border-bottom:1px solid #f0f1f3;gap:12px;flex-wrap:wrap}
 .decide button{padding:5px 12px;border:none;border-radius:5px;font-size:.82rem;
 font-weight:600;cursor:pointer;color:#fff}
 .btn-ok{background:#1a6b3c}.btn-ok:hover{background:#155830}
+.addform{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+.addform input{flex:1 1 150px;padding:8px 10px;border:1px solid #cbd0d6;border-radius:6px;
+font-size:.9rem}
+.addform button{padding:8px 18px;background:#1a6b3c;color:#fff;border:none;border-radius:6px;
+font-size:.9rem;font-weight:600;cursor:pointer}
+.addform button:hover{background:#155830}
+.ok-note{background:#f0f9f3;border-left:3px solid #1a6b3c}
+.bad-note{background:#fdeaea;border-left:3px solid #a4262c}
 .btn-no{background:#a4262c}.btn-no:hover{background:#871f24}
 .val{font-weight:600;text-align:right}
 .pill{display:inline-block;padding:2px 10px;border-radius:99px;font-size:.8rem;font-weight:600}
@@ -213,6 +221,69 @@ async def consent_decision(request: Request, phone: str = Form(...), decision: s
     return RedirectResponse(url="/health/dashboard", status_code=303)
 
 
+@router.post("/principals/add", include_in_schema=False)
+async def add_principal(
+    request: Request,
+    name: str = Form(...),
+    phone: str = Form(""),
+    email: str = Form(""),
+):
+    """Add someone who gets their own Cord, from the dashboard.
+
+    Exists because the alternative was composing JSON full of real phone numbers
+    into an env var and redeploying — poor ergonomics for something done a
+    handful of times, and it failed silently when it wasn't done at all.
+    """
+    if not _authorized(request):
+        return HTMLResponse(_LOGIN_PAGE.format(style=_STYLE, error=""), status_code=401)
+
+    from app.database import get_db_session
+    from app.services import principal_service
+    outcome = "error"
+    try:
+        async with get_db_session() as db:
+            _, outcome = await principal_service.add_principal(db, name, phone, email)
+    except Exception as e:
+        logger.error(f"Could not add principal: {e}")
+    return RedirectResponse(url=f"/health/dashboard?added={outcome}", status_code=303)
+
+
+@router.post("/principals/deactivate", include_in_schema=False)
+async def deactivate_principal(request: Request, user_id: str = Form(...)):
+    if not _authorized(request):
+        return HTMLResponse(_LOGIN_PAGE.format(style=_STYLE, error=""), status_code=401)
+
+    import uuid as _uuid
+
+    from app.database import get_db_session
+    from app.services import principal_service
+    try:
+        async with get_db_session() as db:
+            await principal_service.set_active(db, _uuid.UUID(user_id), False)
+    except Exception as e:
+        logger.error(f"Could not deactivate principal: {e}")
+    return RedirectResponse(url="/health/dashboard", status_code=303)
+
+
+_ADD_PRINCIPAL_FORM = """<form method="post" action="/health/principals/add" class="addform">
+<input type="text" name="name" placeholder="Name" required maxlength="120">
+<input type="tel" name="phone" placeholder="Mobile (for texts)" maxlength="20">
+<input type="email" name="email" placeholder="Email" maxlength="255">
+<button type="submit">Add</button>
+</form>"""
+
+
+_ADD_OUTCOMES = {
+    "added": ('<div class="note ok-note">Added. They can text or email Cord now &mdash; '
+              'though Cord still cannot message them first, so they need to reach out once.</div>'),
+    "updated": '<div class="note ok-note">Already on file &mdash; details updated.</div>',
+    "no_name": '<div class="note bad-note">A name is required.</div>',
+    "no_contact_route": ('<div class="note bad-note">Give a mobile number or an email &mdash; '
+                         'without one there is no way to recognise them or reach them.</div>'),
+    "error": '<div class="note bad-note">Could not add them. Check the logs.</div>',
+}
+
+
 def _decide_buttons(phone: str) -> str:
     return (
         '<form method="post" action="/health/consent-decision" class="decide">'
@@ -251,7 +322,7 @@ def _row(label: str, value: str) -> str:
 
 
 @router.get("/dashboard", include_in_schema=False)
-async def dashboard(request: Request) -> HTMLResponse:
+async def dashboard(request: Request, added: str = "") -> HTMLResponse:
     if not _authorized(request):
         return HTMLResponse(_LOGIN_PAGE.format(style=_STYLE, error=""), status_code=401)
     from datetime import datetime, timezone
@@ -336,6 +407,7 @@ async def dashboard(request: Request) -> HTMLResponse:
 
     # ---- who else uses Cord ----------------------------------------------
     principal_rows = []
+    principal_config = ("unknown", "")
     try:
         from app.services import principal_service
         async with get_db_session() as db:
@@ -357,7 +429,13 @@ async def dashboard(request: Request) -> HTMLResponse:
                     "everything (hers)" if person.is_owner
                     else (", ".join(shared) if shared
                           else '<span class="pill off">nothing shared</span>'),
+                    "" if person.is_owner else (
+                        '<form method="post" action="/health/principals/deactivate" class="decide">'
+                        f'<input type="hidden" name="user_id" value="{person.id}">'
+                        '<button class="btn-no">Remove</button></form>'
+                    ),
                 ))
+            principal_config = principal_service.config_health()
     except Exception as e:
         logger.error(f"Dashboard could not read principals: {e}")
 
@@ -599,8 +677,15 @@ see what they send back — ask Cord to give them circle access.</div>
 
 <div class="card">
 <h2>Who else uses Cord</h2>
-{_table(principal_rows, ["Name", "Role", "Reaches Cord by", "Can see of Cordia's"],
-        "Only Cordia is set up. Add others with PRINCIPALS_JSON in Railway.")}
+{_table(principal_rows, ["Name", "Role", "Reaches Cord by", "Can see of Cordia's", ""],
+        "Nobody is set up yet.")}
+{_ADD_OUTCOMES.get(added, "")}
+{_ADD_PRINCIPAL_FORM}
+<div class="note"><strong>Add anyone who should get their own assistant</strong> &mdash;
+Tom, Karie, anyone else. A mobile number lets them text Cord; an email lets them
+write to it. One of the two is enough, both is better. They still have to reach
+out first: Cord never messages anyone who hasn't contacted it.
+<br><span style="color:#6b7280">{principal_config[1]}</span></div>
 <div class="note">Everyone here has their <strong>own separate</strong> assistant.
 They see nothing of Cordia's except what is listed in the last column, and Cord
 never messages them on its own &mdash; the morning brief, birthday nudges and

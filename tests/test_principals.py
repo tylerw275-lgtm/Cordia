@@ -368,3 +368,131 @@ async def test_tom_cannot_release_a_batch_drafted_in_cordias_thread(db, people):
 async def test_a_principal_with_no_conversation_cannot_approve(db, people):
     from app.tools import outbound_tools as ot
     assert await ot._code_confirmed_by_owner(db, "ABC123", people["karie"]) is False
+
+
+# --- adding people from the dashboard ---------------------------------------
+
+@pytest.mark.asyncio
+async def test_someone_added_by_hand_is_resolvable_both_ways(db):
+    """The point of the form: composing JSON full of phone numbers into an env
+    var and redeploying failed silently when it wasn't done."""
+    user, outcome = await principal_service.add_principal(
+        db, "Karie Hampton", "+16153101552", "Karie@Example.com"
+    )
+
+    assert outcome == "added"
+    assert user.is_owner is False
+    assert (await principal_service.resolve_by_phone(db, "(615) 310-1552")).name == "Karie Hampton"
+    assert (await principal_service.resolve_by_email(db, "karie@example.com")).name == "Karie Hampton"
+
+
+@pytest.mark.asyncio
+async def test_a_person_with_no_way_to_reach_them_is_refused(db):
+    """A row with neither phone nor email looks right on the page and does
+    nothing: it can never be resolved from an inbound message or messaged."""
+    user, outcome = await principal_service.add_principal(db, "Ghost")
+    assert user is None and outcome == "no_contact_route"
+
+
+@pytest.mark.asyncio
+async def test_adding_an_existing_number_updates_instead_of_duplicating(db):
+    """A duplicate would split their conversation history in two."""
+    await principal_service.add_principal(db, "Tom", "+16157080001")
+    user, outcome = await principal_service.add_principal(
+        db, "Tom Harrington", "+16157080001", "tom@example.com"
+    )
+
+    assert outcome == "updated"
+    assert user.name == "Tom Harrington"
+    assert user.email == "tom@example.com"
+    assert len(await principal_service.list_principals(db)) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_form_cannot_create_a_second_owner(db, people):
+    user, _ = await principal_service.add_principal(db, "Impostor", "+15559990000")
+    assert user.is_owner is False
+    assert (await principal_service.get_owner(db)).name == "Cordia"
+
+
+@pytest.mark.asyncio
+async def test_deactivating_stops_resolution_but_keeps_the_row(db, people):
+    assert await principal_service.set_active(db, people["tom"].id, False) is True
+
+    assert await principal_service.resolve_by_phone(db, TOM["phone"]) is None
+    assert await principal_service.resolve_by_email(db, TOM["email"]) is None
+    # Still on file, so their history and grants stay coherent.
+    assert len(await principal_service.list_principals(db)) == 3
+
+
+@pytest.mark.asyncio
+async def test_the_owner_cannot_be_deactivated(db, people):
+    assert await principal_service.set_active(db, people["cordia"].id, False) is False
+    assert await principal_service.resolve_by_phone(db, CORDIA["phone"]) is not None
+
+
+def test_config_health_reports_malformed_json(mocker):
+    """Malformed PRINCIPALS_JSON otherwise only ever shows in a boot log."""
+    mocker.patch.object(settings, "principals_json", "{not json")
+    status, message = principal_service.config_health()
+    assert status == "invalid" and "not valid JSON" in message
+
+    mocker.patch.object(settings, "principals_json", "")
+    assert principal_service.config_health()[0] == "unset"
+
+    mocker.patch.object(settings, "principals_json", json.dumps([CORDIA, TOM]))
+    status, message = principal_service.config_health()
+    assert status == "ok" and "2 entries" in message
+
+
+# --- through the dashboard --------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_adding_through_the_dashboard_requires_a_session(db, client, mocker):
+    from app.api import dashboard as d
+
+    mocker.patch.object(settings, "dashboard_password", "pw")
+    mocker.patch.object(settings, "admin_api_secret", "s3cret")
+
+    r = await client.post("/health/principals/add", data={"name": "Tom", "phone": "+16157080001"})
+
+    assert r.status_code == 401
+    assert await principal_service.resolve_by_phone(db, "+16157080001") is None
+
+
+@pytest.mark.asyncio
+async def test_adding_through_the_dashboard_works_and_shows_up(db, client, mocker):
+    from app.api import dashboard as d
+
+    mocker.patch.object(settings, "dashboard_password", "pw")
+    client.cookies.set(d._COOKIE, d._issue_session())
+
+    r = await client.post(
+        "/health/principals/add",
+        data={"name": "Karie Hampton", "phone": "6153101552", "email": "karie@example.com"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+
+    html = (await client.get("/health/dashboard")).text
+    assert "Karie Hampton" in html
+    assert "(615) 310-1552" in html
+    assert "nothing shared" in html  # walled off until Cordia shares something
+
+
+@pytest.mark.asyncio
+async def test_the_dashboard_always_explains_how_to_add_people(db, client, mocker):
+    """The guidance used to be the empty-table message, and the table is never
+    empty — so the one line that would have explained this never rendered."""
+    from app.api import dashboard as d
+
+    mocker.patch.object(settings, "dashboard_password", "pw")
+    mocker.patch.object(settings, "principals_json", "")
+    await principal_service.add_principal(db, "Cordia", "+16155550001")
+
+    client.cookies.set(d._COOKIE, d._issue_session())
+    html = (await client.get("/health/dashboard")).text
+
+    assert "Add anyone who should get their own assistant" in html
+    assert 'action="/health/principals/add"' in html
+    assert "PRINCIPALS_JSON is not set" in html
