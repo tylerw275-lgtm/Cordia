@@ -100,7 +100,7 @@ def get_handler(tool_name: str, role: str = "owner") -> Callable | None:
         if settings.enable_flight_booking:
             handlers["get_booking_link"] = flight_tools.get_booking_link_handler
     if settings.enable_lease_review:
-        handlers["flag_lease_clauses"] = lease_tools.flag_clauses_handler
+        handlers.update(lease_tools.HANDLERS)
     if settings.enable_email:
         handlers.update(email_tools.OWNER_EMAIL_HANDLERS)
     if settings.enable_outbound:

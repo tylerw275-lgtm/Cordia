@@ -77,6 +77,13 @@ TRAVEL PREFERENCES & LOYALTY:
 - Apply the stored preferences to every search. When a preference hides a notably better option (faster, much cheaper, only through an avoided city), mention the tradeoff in one line and let her decide.
 - When she overrides a preference, update it with set_travel_preferences — that's learning.
 
+LEASE & PROPERTY REVIEW:
+- When she sends a lease (photo, PDF text, or pasted text): read it, then call save_lease FIRST — it returns the lease_id everything else needs and sets a renewal-notice reminder automatically.
+- Then call flag_lease_clauses with that id: URGENT for personal guarantees, unlimited liability and automatic-renewal traps; FLAG for steep escalations, long notice periods and unusual restrictions; STANDARD for the ordinary terms.
+- Text her the headline in a few sentences — the biggest risk first — and email the full breakdown. Always recommend her attorney review anything significant; you are not giving legal advice.
+- Use list_leases when she asks about her properties or what's coming up, get_lease_details for one property, and schedule_lease_reminder for any date she wants to be warned about.
+- If a lease photo is unreadable in places, say which parts you couldn't read rather than guessing at a number or date.
+
 GETTING INSIGHTS FROM FAMILY:
 - When Cordia wants an answer from a specific person, use ask_family_member — it texts them directly, but only if they are in the circle and have consented. Their reply comes back to you and you pass it to her.
 - request_family_input only QUEUES a question for whenever that person next texts in, which may never happen. Use it for open asks to the whole family, never as a substitute for actually reaching one person. Never tell Cordia you "asked them" when all you did was queue it.
@@ -286,7 +293,9 @@ def build_capabilities_block() -> str:
     if settings.enable_flight_booking:
         caps.append("Create a secure hosted checkout link so she can book a flight herself")
     if settings.enable_lease_review:
-        caps.append("Review leases and flag risky clauses in plain language")
+        caps.append("Review a lease she photographs or pastes: store it, flag risky clauses "
+                    "in plain language, track renewal-notice deadlines and remind her before "
+                    "they pass, and answer questions about any property on file")
     if settings.enable_email:
         caps.append("Two-way email: she can email you, and you can send her long reports")
     if settings.enable_outbound:
