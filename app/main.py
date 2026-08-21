@@ -219,6 +219,67 @@ async def health_test_email() -> dict:
     }
 
 
+@app.get("/health/consent", include_in_schema=False, dependencies=_admin)
+async def health_consent() -> dict:
+    """Audit the SMS consent record against the people on file.
+
+    The usual failure is a number mismatch: someone signs the form with a
+    different number than the one stored on their profile, so they are
+    consented in the eyes of the law but invisible to the roster. Shows both
+    sides so the mismatch is obvious. Phone numbers are masked to the last four.
+    """
+    from sqlalchemy import select
+    from app.database import get_db_session
+    from app.models.contact import Contact
+    from app.models.family import FamilyMember
+    from app.utils.phone import normalize_phone
+
+    def last4(v: str) -> str:
+        d = "".join(c for c in (v or "") if c.isdigit())
+        return f"...{d[-4:]}" if len(d) >= 4 else "(none)"
+
+    async with get_db_session() as db:
+        rows = (await db.execute(sa_text(
+            "SELECT phone, method, consented_at, opted_out_at FROM sms_consent ORDER BY consented_at"
+        ))).fetchall()
+
+        people: dict[str, str] = {}
+        for m in (await db.execute(select(FamilyMember).where(FamilyMember.phone.isnot(None)))).scalars():
+            key = normalize_phone(m.phone)
+            if key:
+                people[key] = m.name
+        for c in (await db.execute(select(Contact).where(Contact.phone.isnot(None)))).scalars():
+            key = normalize_phone(c.phone)
+            if key:
+                people.setdefault(key, c.name)
+
+    consent_records, matched_keys = [], set()
+    for phone, method, consented_at, opted_out_at in rows:
+        key = normalize_phone(phone)
+        matched_keys.add(key)
+        consent_records.append({
+            "phone": last4(phone),
+            "method": method,
+            "consented_at": consented_at.isoformat() if consented_at else None,
+            "opted_out": bool(opted_out_at),
+            "matched_person": people.get(key),
+            "note": None if people.get(key) else
+                    "consented, but no person on file has this number — check the number on their profile",
+        })
+
+    return {
+        "consent_records": consent_records,
+        "people_with_a_number_but_no_consent": sorted(
+            name for key, name in people.items() if key not in matched_keys
+        ),
+        "hint": (
+            "A person listed under people_with_a_number_but_no_consent who says they consented "
+            "almost certainly signed with a different number than the one on their profile — "
+            "compare against any consent record whose matched_person is null."
+        ),
+    }
+
+
 @app.get("/health/config", include_in_schema=False, dependencies=[Depends(require_admin)])
 async def health_config() -> dict:
     """Deployment diagnostics: which settings are configured, never their
