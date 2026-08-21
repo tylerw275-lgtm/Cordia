@@ -88,7 +88,30 @@ def get_tool_schemas(role: str = "owner") -> list[dict]:
         from app.tools import contact_tools, outbound_tools
         schemas.extend(contact_tools.TOOL_SCHEMAS)
         schemas.extend(outbound_tools.TOOL_SCHEMAS)
-    return schemas
+    return _dedupe(schemas)
+
+
+def _dedupe(schemas: list[dict]) -> list[dict]:
+    """Keep the first definition of each tool name.
+
+    The Anthropic API rejects a request whose tool names are not unique — a 400
+    that takes down the whole turn, not just the duplicated tool. This registry
+    composes from several modules and one of them overlaps on purpose:
+    list_sms_roster is lifted into _BASE_TOOLS so Cordia can ask who she may
+    text before outbound is switched on, and contact_tools contributes it again
+    once the flag is set. That collision took production down the moment
+    enable_outbound flipped, so uniqueness is enforced here rather than left to
+    everyone who adds a tool getting it right.
+    """
+    seen: set[str] = set()
+    unique = []
+    for schema in schemas:
+        name = schema.get("name")
+        if name in seen:
+            continue
+        seen.add(name)
+        unique.append(schema)
+    return unique
 
 
 def get_handler(tool_name: str, role: str = "owner") -> Callable | None:
