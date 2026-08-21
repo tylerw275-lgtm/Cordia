@@ -35,6 +35,15 @@ async def engine():
             "approval_status VARCHAR(10) NOT NULL DEFAULT 'pending', "
             "reviewed_at TIMESTAMPTZ)"
         )
+        # Migration 015. Also no ORM model; it used to be created lazily by the
+        # form handler, which is exactly why every database nobody had signed
+        # the form on was missing a table list_consent_requests joins.
+        await conn.exec_driver_sql("DROP TABLE IF EXISTS consent_submissions")
+        await conn.exec_driver_sql(
+            "CREATE TABLE consent_submissions ("
+            "id SERIAL PRIMARY KEY, full_name TEXT NOT NULL, "
+            "phone VARCHAR(20) NOT NULL, submitted_at TIMESTAMPTZ NOT NULL)"
+        )
     yield eng
     await eng.dispose()
 

@@ -12,9 +12,13 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     claude_model: str = "claude-sonnet-4-6"
 
-    # Active SMS provider: "twilio" or "signalhouse". Everything above the
+    # Active SMS provider: "signalhouse" or "twilio". Everything above the
     # send/receive layer (consent, keywords, drafting) is provider-agnostic.
-    sms_provider: str = "twilio"
+    # The default is what actually runs: the 10DLC campaign and the number live
+    # at Signal House. It defaulted to twilio, so production was correct only
+    # because an env var overrode it — losing that variable would have sent
+    # every message to a provider with no credentials.
+    sms_provider: str = "signalhouse"
 
     # Signal House (10DLC campaign + number live here)
     signalhouse_api_key: str = ""

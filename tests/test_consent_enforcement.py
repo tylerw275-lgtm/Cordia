@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 import pytest
 from sqlalchemy import text
 
+from app.config import settings
 from app.services import sms_service
 
 OWNER = "+15551230000"
@@ -52,10 +53,19 @@ async def test_opt_out_matches_regardless_of_formatting(db):
         assert await sms_service.is_opted_out(db, variant) is True
 
 
+# Both are parametrised over the provider rather than assuming one. Opt-out is
+# a rule above the send layer, and pinning these to twilio meant they stopped
+# describing production the moment the default provider changed.
+_PROVIDERS = [("twilio", "app.services.twilio_service.send_sms"),
+              ("signalhouse", "app.services.signalhouse_service.send_sms")]
+
+
+@pytest.mark.parametrize("name,path", _PROVIDERS)
 @pytest.mark.asyncio
-async def test_send_is_suppressed_after_stop(db, mocker):
+async def test_send_is_suppressed_after_stop(db, mocker, name, path):
     await _record(db, OWNER, opted_out=True)
-    provider = mocker.patch("app.services.twilio_service.send_sms", new=mocker.AsyncMock())
+    mocker.patch.object(settings, "sms_provider", name)
+    provider = mocker.patch(path, new=mocker.AsyncMock())
     mocker.patch("app.services.sms_service.get_db_session", create=True)
     mocker.patch("app.services.sms_service.is_opted_out", new=mocker.AsyncMock(return_value=True))
 
@@ -64,14 +74,23 @@ async def test_send_is_suppressed_after_stop(db, mocker):
     assert not provider.called
 
 
+@pytest.mark.parametrize("name,path", _PROVIDERS)
 @pytest.mark.asyncio
-async def test_forced_send_still_goes_out(mocker):
+async def test_forced_send_still_goes_out(mocker, name, path):
     """The STOP confirmation and HELP are carrier-mandated and must reach an
     opted-out number."""
-    provider = mocker.patch("app.services.twilio_service.send_sms", new=mocker.AsyncMock())
+    mocker.patch.object(settings, "sms_provider", name)
+    provider = mocker.patch(path, new=mocker.AsyncMock())
     opt_check = mocker.patch("app.services.sms_service.is_opted_out", new=mocker.AsyncMock(return_value=True))
 
     sent = await sms_service.send_sms(to=OWNER, body="You have been unsubscribed.", force=True)
     assert sent is True
     assert provider.called
     assert not opt_check.called  # not even consulted
+
+
+def test_the_default_provider_is_the_one_that_is_actually_live():
+    """The 10DLC campaign and the number live at Signal House. Defaulting to
+    twilio meant production was correct only while an env var overrode it."""
+    from app.config import Settings
+    assert Settings().sms_provider == "signalhouse"

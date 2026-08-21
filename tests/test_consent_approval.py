@@ -24,10 +24,6 @@ async def _sign(db, phone, status="pending", name="Someone", opted_out=False):
         {"p": phone, "ts": datetime.now(timezone.utc), "s": status,
          "out": datetime.now(timezone.utc) if opted_out else None},
     )
-    await db.execute(text(
-        "CREATE TABLE IF NOT EXISTS consent_submissions (id SERIAL PRIMARY KEY, "
-        "full_name TEXT NOT NULL, phone VARCHAR(20) NOT NULL, submitted_at TIMESTAMPTZ NOT NULL)"
-    ))
     await db.execute(
         text("INSERT INTO consent_submissions (full_name, phone, submitted_at) "
              "VALUES (:n, :p, :ts)"),
@@ -227,3 +223,27 @@ async def test_a_rejected_number_never_slips_into_who_cord_can_text(db, client, 
     assert "Who Cord can text" in html
     assert "5645" not in html
     assert await consent_service.is_approved(db, STRANGER) is False
+
+
+# --- the table the approval queue joins -------------------------------------
+
+@pytest.mark.asyncio
+async def test_the_approval_queue_works_on_a_database_nobody_has_signed_on(db):
+    """consent_submissions used to be created lazily by the form handler, so on
+    a fresh deploy or a restored backup this tool raised UndefinedTable instead
+    of reporting an empty queue. It is migration 015's table now."""
+    result = await consent_tools.list_consent_requests_handler(db)
+    assert result["pending_count"] == 0
+
+
+def test_the_migration_chain_owns_consent_submissions():
+    """If the form handler ever goes back to creating it lazily, the schema
+    stops being reproducible from migrations alone."""
+    from pathlib import Path
+
+    versions = list(Path("alembic/versions").glob("*.py"))
+    assert any("consent_submissions" in v.read_text() and "create_table" in v.read_text()
+               for v in versions), "no migration creates consent_submissions"
+
+    handler = Path("app/api/compliance.py").read_text()
+    assert "CREATE TABLE IF NOT EXISTS consent_submissions" not in handler

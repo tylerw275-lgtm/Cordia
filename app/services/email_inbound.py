@@ -90,9 +90,15 @@ async def _resolve_trusted_contact(db: AsyncSession, sender: str):
 
 
 async def _resolve_sender(db: AsyncSession, sender: str):
-    """Return (role, member, conversation_key)."""
+    """Return (role, member, conversation_key).
+
+    Roles match the SMS resolver's, including 'unapproved' — deliberately.
+    Rejecting someone in the dashboard used to stop them texting and do nothing
+    at all about email, so the approval Cordia thought she had revoked was still
+    live on the other channel.
+    """
     # Karie works mostly by email, so this path matters as much as the SMS one.
-    from app.services import principal_service
+    from app.services import consent_service, principal_service
     principal = await principal_service.resolve_by_email(db, sender)
     if principal is not None:
         # Key the thread on the address they wrote from, so each principal has
@@ -102,6 +108,9 @@ async def _resolve_sender(db: AsyncSession, sender: str):
         return "owner", None, (settings.cordia_phone_number or settings.owner_email)
     member = await family_circle_service.resolve_member_by_email(db, sender)
     if member and member.has_circle_access:
+        # Same gate as SMS: on the roster is not the same as approved.
+        if member.phone and await consent_service.status_for(db, member.phone) in ("rejected", "pending"):
+            return "unapproved", member, None
         return "family", member, (member.phone or sender)
     contact = await _resolve_trusted_contact(db, sender)
     if contact:
@@ -154,6 +163,14 @@ async def process_inbound_email(db: AsyncSession, sender: str, subject: str, bod
         return "ignored_empty_body"
 
     role, member, conv_key = await _resolve_sender(db, sender)
+    if role == "unapproved":
+        # Silence rather than an explanation, for the same reason as SMS: a
+        # reply would confirm the roster to whoever is probing it.
+        logger.warning(
+            f"Email from {_mask(sender)} ({member.name}) — on the roster but not "
+            "approved by Cordia; ignored"
+        )
+        return "ignored_unapproved_sender"
     if role == "unknown":
         logger.warning(
             f"Inbound email from unknown sender {_mask(sender)} — ignored. "

@@ -57,24 +57,33 @@ async def _has_signed_consent_form(db: AsyncSession, phone: str) -> bool:
 
 
 async def _resolve_sender(db: AsyncSession, phone: str):
-    """Return (role, member). role is 'owner', 'family', 'unapproved', or 'unknown'.
+    """Return (role, member). role is 'owner', 'family', 'opted_out',
+    'unapproved', or 'unknown'.
 
     'unapproved' is deliberately distinct from 'unknown': the number is on a
     profile, but Cordia has not approved (or has rejected) it, so it gets no
     conversation. The consent form is publicly linked, so signing it is never
     by itself enough to reach her assistant.
+
+    'opted_out' applies to principals too, which is easy to get wrong. Anyone
+    who texted STOP still resolves to a real person, so the turn used to run in
+    full and bill for an answer that send_sms then suppressed — she would text,
+    pay for the model, and hear nothing.
     """
+    status = await consent_service.status_for(db, phone)
+
     # Principals first: Cordia and anyone who gets their own full assistant.
     principal = await principal_service.resolve_by_phone(db, phone)
     if principal is not None:
-        return "owner", principal
+        return ("opted_out" if status == "opted_out" else "owner"), principal
     # Config fallback so a deployment that has not set PRINCIPALS_JSON still
     # resolves Cordia rather than rejecting her own number.
     if phones_match(phone, settings.cordia_phone_number) or phones_match(phone, settings.cordia_test_phone_number):
-        return "owner", None
+        return ("opted_out" if status == "opted_out" else "owner"), None
     member = await family_circle_service.resolve_member_by_phone(db, phone)
     if member and member.has_circle_access:
-        status = await consent_service.status_for(db, phone)
+        if status == "opted_out":
+            return "opted_out", member
         if status in ("rejected", "pending"):
             return "unapproved", member
         return "family", member
@@ -395,6 +404,15 @@ async def _process_inbound(db: AsyncSession, from_number: str, body: str, media:
     role, member = await _resolve_sender(db, from_number)
     if role == "unknown":
         logger.warning(f"SMS from unknown number {from_number} — rejected")
+        return
+    if role == "opted_out":
+        # They texted STOP. Running the turn would bill for a reply send_sms
+        # then suppresses. The STOP confirmation already said START resumes it,
+        # and sending anything else here is the one thing an opt-out forbids.
+        logger.warning(
+            f"SMS from {from_number} after STOP — no turn run and nothing billed; "
+            "only START resumes the program"
+        )
         return
     if role == "unapproved":
         # Silence, not an explanation: telling an unapproved number what is

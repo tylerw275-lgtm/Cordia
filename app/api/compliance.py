@@ -315,11 +315,9 @@ async def consent_form_submit(
 
     normalized = f"+1{digits[-10:]}"
     now = datetime.now(timezone.utc)
-    await db.execute(text(
-        "CREATE TABLE IF NOT EXISTS consent_submissions ("
-        "id SERIAL PRIMARY KEY, full_name TEXT NOT NULL, phone VARCHAR(20) NOT NULL, "
-        "submitted_at TIMESTAMPTZ NOT NULL)"
-    ))
+    # The table is created by migration 015, not lazily here. Creating it on
+    # first submission meant every database where nobody had submitted the form
+    # yet was missing a table that list_consent_requests joins unguarded.
     await db.execute(
         text("INSERT INTO consent_submissions (full_name, phone, submitted_at) "
              "VALUES (:name, :phone, :ts)"),
