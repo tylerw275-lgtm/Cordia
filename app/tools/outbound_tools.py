@@ -238,24 +238,45 @@ async def cancel_outbound_handler(db: AsyncSession, **kw) -> dict:
     return {"canceled": canceled, "batch_id": batch_id}
 
 
-async def _code_confirmed_by_owner(db: AsyncSession, code: str) -> bool:
-    """True if the code appears in a message Cordia actually sent.
+async def _code_confirmed_by_owner(db: AsyncSession, code: str, actor=None) -> bool:
+    """True if the code appears in a message the approver actually sent.
 
     Checked against persisted inbound user turns rather than trusting the tool
-    input, so a model that merely knows the code still cannot approve on her
-    behalf — she has to have typed it.
+    input, so a model that merely knows the code still cannot approve on
+    Cordia's behalf — she has to have typed it.
+
+    With more than one principal this must also be scoped to *whose* thread the
+    code appeared in. Searching every conversation would let Tom typing a code
+    in his own workspace release a batch drafted in Cordia's, which is exactly
+    the wall this release is about.
     """
-    from app.models.conversation import Message
+    from app.models.conversation import Conversation, Message
+    from app.utils.phone import normalize_phone
 
     if not code:
         return False
-    result = await db.execute(
+
+    query = (
         select(Message)
         .where(Message.role == "user")
         .where(Message.content.contains(code))
-        .limit(1)
     )
-    return result.scalars().first() is not None
+    if actor is not None:
+        keys = [k for k in (actor.phone, actor.email) if k]
+        if not keys:
+            return False
+        conversations = (await db.execute(select(Conversation))).scalars().all()
+        digits = normalize_phone(actor.phone) if actor.phone else None
+        mine = [
+            c.id for c in conversations
+            if (digits and normalize_phone(c.phone_number) == digits)
+            or (actor.email and (c.phone_number or "").strip().lower() == actor.email.strip().lower())
+        ]
+        if not mine:
+            return False
+        query = query.where(Message.conversation_id.in_(mine))
+
+    return (await db.execute(query.limit(1))).scalars().first() is not None
 
 
 async def send_outbound_handler(db: AsyncSession, **kw) -> dict:
@@ -273,10 +294,12 @@ async def send_outbound_handler(db: AsyncSession, **kw) -> dict:
     if not hmac.compare_digest(supplied, expected):
         return {"sent": 0, "blocked": True,
                 "message": "Not sent — that approval code doesn't match this batch. Ask Cordia to text the code back."}
-    if not await _code_confirmed_by_owner(db, expected):
+    actor = kw.get("acting_user")
+    if not await _code_confirmed_by_owner(db, expected, actor):
+        who = getattr(actor, "name", None) or "Cordia"
         return {"sent": 0, "blocked": True,
-                "message": ("Not sent — Cordia hasn't sent the approval code yet. Show her the drafts "
-                            "and ask her to reply with the code. Do not send it on her behalf.")}
+                "message": (f"Not sent — {who} hasn't sent the approval code yet. Show the drafts "
+                            "and ask for the code back. Do not send it on anyone's behalf.")}
     sent, skipped = [], []
     for d in drafts:
         if d.status != "draft":
@@ -297,6 +320,7 @@ async def send_outbound_handler(db: AsyncSession, **kw) -> dict:
             ok, reason = False, str(e)
         if ok:
             d.status = "sent"
+            d.approved_by = getattr(kw.get("acting_user"), "name", None)
             d.sent_at = datetime.now(timezone.utc)
             sent.append({"to_name": d.to_name, "channel": d.channel})
             logger.info(f"Outbound sent to {d.to_name} via {d.channel} ({mask_address(d.to_address)})")

@@ -30,6 +30,7 @@ async def store_memory(
     tags: list[str] | None = None,
     family_member_id: str | None = None,
     source: str = "conversation",
+    owner_user_id=None,
 ) -> Memory:
     mem = Memory(
         category=category,
@@ -38,6 +39,7 @@ async def store_memory(
         tags=tags,
         family_member_id=uuid.UUID(family_member_id) if family_member_id else None,
         source=source,
+        owner_user_id=owner_user_id,
     )
     db.add(mem)
     await db.commit()
@@ -74,9 +76,25 @@ async def search_memories(
     tags: list[str] | None = None,
     limit: int = 10,
     exclude_categories: Sequence[str] | None = None,
+    visible_owner_ids: Sequence | None = None,
+    may_read_unowned: bool = False,
 ) -> Sequence[Memory]:
-    """Keyword search over stored memories, ranked by how many terms hit."""
+    """Keyword search over stored memories, ranked by how many terms hit.
+
+    `visible_owner_ids` walls one principal's memories off from another's. This
+    search feeds straight into the system prompt, so leaving it unfiltered would
+    hand Tom whatever Cordia has told Cord in confidence — including plans about
+    him. None means unrestricted, which is only correct for a single-user
+    deployment or an explicitly owner-scoped call.
+    """
     stmt = select(Memory)
+    if visible_owner_ids is not None:
+        # NULL owner means Cordia — every row predating multi-user was hers. She
+        # must still see them; Tom and Karie must not, unless she has shared.
+        clause = Memory.owner_user_id.in_(list(visible_owner_ids))
+        if may_read_unowned:
+            clause = or_(clause, Memory.owner_user_id.is_(None))
+        stmt = stmt.where(clause)
     if category:
         stmt = stmt.where(Memory.category == category)
     if exclude_categories:

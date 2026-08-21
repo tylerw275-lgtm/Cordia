@@ -93,6 +93,22 @@ SMS program name remains "Cordia AI by AI-Gen Partners" for compliance.)
   described as "in development," and Cordia can ask for features she wants — they're
   logged for the team (`request_feature`).
 
+**More than one person, each walled off**
+- Cordia is the account holder. Others she authorises — her husband, her assistant — each
+  get their **own separate Cord** with their own projects, notes and history, for their
+  own work.
+- Nothing crosses between workspaces by default. Cord will not mention or use anything of
+  Cordia's when talking to someone else, and reports a project they cannot see as *not
+  found* rather than *forbidden* (saying "you can't see that" confirms it exists).
+- **Sharing and briefing are different.** Sharing gives standing access until revoked;
+  briefing sends one message and grants nothing. Cord keeps them apart and asks when it's
+  genuinely ambiguous.
+- **Cord never messages anyone on its own initiative.** The morning brief, birthday nudges
+  and fare alerts go to Cordia alone, whoever else is set up.
+- Being authorised is not SMS consent: Cord still cannot text anyone first.
+- Principals load from `PRINCIPALS_JSON` (deliberately not in the repo — real names and
+  mobile numbers), and the dashboard shows who has access and exactly what they can see.
+
 **Projects — it interviews her before it answers**
 - A one-line ask that deserves real work ("what should I pack for the Naples house",
   "find me a car service for Thursday") no longer gets an instant generic reply. Cord
@@ -163,7 +179,7 @@ at cordia.aigenpartners.com; the opt-in page carries the consent form itself.
 
 **Stack**
 - Python + **FastAPI**; **PostgreSQL** via async SQLAlchemy; **Alembic** migrations
-  (through `013_projects`); **APScheduler** for recurring jobs, on an
+  (through `014_authorized_users`); **APScheduler** for recurring jobs, on an
   explicit `SCHEDULER_TIMEZONE`.
 - **SMS:** Signal House (10DLC campaign approved). Inbound webhook
   `POST /webhook/signalhouse` (shared-secret auth, constant-time compare); outbound via
@@ -196,7 +212,7 @@ at cordia.aigenpartners.com; the opt-in page carries the consent form itself.
 **Feature flags (`app/config.py`)**
 - `enable_web_research` (on, ~$0.01/search) · `enable_flight_search` (on) · `enable_lease_review` (on) · `enable_family_coordination`
   (on) · `enable_email` (on) · `enable_flight_booking` (**off** until tested) ·
-  `enable_outbound` (**off** until the approval flow is verified) · Naples inbox (on when
+  `enable_outbound` (**on** — nothing sends without her typed approval code) · Naples inbox (on when
   `naples_email_address`/`naples_email_app_password` are set).
 
 **Scheduled jobs (`app/scheduler/scheduler.py`)** — flight monitor (hourly), lease

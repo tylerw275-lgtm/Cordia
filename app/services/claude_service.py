@@ -241,17 +241,42 @@ async def _persist_message(
     await db.commit()
 
 
-async def _build_owner_system(db: AsyncSession, user_message: str, context_hint: str | None, channel: str = "sms") -> list[dict]:
+async def _build_owner_system(db: AsyncSession, user_message: str, context_hint: str | None, channel: str = "sms", sender_user: Any = None) -> list[dict]:
     if context_hint is None:
         context_hint = detect_context(user_message)
 
     # feature_request memories are an internal team backlog written by
     # request_feature — never part of what Cord recalls for Cordia.
+    # Scope the memory injection to this principal. This search feeds straight
+    # into the system prompt, so an unfiltered one would hand Tom whatever
+    # Cordia has told Cord in confidence — including plans about him.
+    from app.services import principal_service
+    if sender_user is not None:
+        visible, unowned = await principal_service.visible_scope(db, sender_user, "memories")
+    else:
+        visible, unowned = None, True
     memories = await memory_service.search_memories(
-        db, query=user_message, limit=5, exclude_categories=["feature_request"]
+        db, query=user_message, limit=5, exclude_categories=["feature_request"],
+        visible_owner_ids=visible, may_read_unowned=unowned,
     )
     roster = await family_service.get_family_roster_text(db)
     system = build_system_prompt(context_hint, family_roster=roster, channel=channel)
+
+    if sender_user is not None and not sender_user.is_owner:
+        owner = await principal_service.get_owner(db)
+        owner_name = owner.name if owner else "Cordia"
+        system.append({"type": "text", "text": (
+            f"\nWHO YOU ARE TALKING TO: {sender_user.name}. This is their own "
+            f"workspace, not {owner_name}'s. Address them by name. Anything "
+            f"{owner_name} has not explicitly shared with them is off limits — do "
+            "not mention it, use it, or hint that it exists. If they ask for "
+            f"something of {owner_name}'s they have not been given, say you would "
+            f"need {owner_name} to share it and leave it there."
+        )})
+    elif sender_user is not None:
+        system.append({"type": "text", "text": (
+            f"\nWHO YOU ARE TALKING TO: {sender_user.name}, the account holder."
+        )})
     if memories:
         lines = [f"- {m.subject}: {m.content}" for m in memories]
         system.append({"type": "text", "text": "\nRELEVANT MEMORY:\n" + "\n".join(lines)})
@@ -371,6 +396,10 @@ async def chat(
     context_hint: str | None = None,
     sender_role: str = "owner",
     sender_member: Any = None,
+    # A principal (Cordia, Tom, Karie). Deliberately separate from
+    # sender_member, which is a family-circle member with a different prompt and
+    # a much smaller toolset — conflating them would hand the wrong one out.
+    sender_user: Any = None,
     images: list[dict] | None = None,
     channel: str = "sms",
 ) -> str:
@@ -383,7 +412,8 @@ async def chat(
     elif sender_role == "family" and sender_member is not None:
         system = await _build_family_system(db, sender_member)
     else:
-        system = await _build_owner_system(db, user_message, context_hint, channel=channel)
+        system = await _build_owner_system(db, user_message, context_hint, channel=channel,
+                                           sender_user=sender_user)
 
     # Model-adaptive request shaping: bigger budget + thinking/effort for deep work
     profile = get_profile(settings.claude_model)
@@ -411,8 +441,10 @@ async def chat(
     # Attribute cost to a person, not a conversation id. The member's phone is
     # the same key their SMS usage is recorded under, so a per-person total
     # lines up across channels.
-    usage_actor = getattr(sender_member, "phone", None) or (
-        settings.cordia_phone_number if sender_role == "owner" else None
+    usage_actor = (
+        getattr(sender_user, "phone", None) or getattr(sender_user, "email", None)
+        or getattr(sender_member, "phone", None)
+        or (settings.cordia_phone_number if sender_role == "owner" else None)
     )
 
     messages = history + [{"role": "user", "content": user_content}]
@@ -475,7 +507,12 @@ async def chat(
                             if sender_role == "family":
                                 result = await handler(db=db, acting_member=sender_member, **block.input)
                             else:
-                                result = await handler(db=db, **block.input)
+                                # acting_user lets a handler scope its reads to
+                                # this principal. Every handler takes **kw, so
+                                # the ones that do not care simply ignore it.
+                                result = await handler(
+                                    db=db, acting_user=sender_user, **block.input
+                                )
                         except Exception as e:
                             logger.error(f"Tool {block.name} error: {e}")
                             result = {"error": str(e)}

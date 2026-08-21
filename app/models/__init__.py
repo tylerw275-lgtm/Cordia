@@ -1,3 +1,4 @@
+from app.models.authorized_user import AccessGrant, AuthorizedUser
 from app.models.contact import Contact
 from app.models.conversation import Conversation, Message
 from app.models.family import (
@@ -17,6 +18,8 @@ from app.models.trips import FlightWatch, PriceSnapshot, Trip
 from app.models.user import User
 
 __all__ = [
+    "AccessGrant",
+    "AuthorizedUser",
     "Contact",
     "Conversation",
     "FamilyEvent",

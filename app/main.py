@@ -82,9 +82,31 @@ async def _bootstrap_family_data() -> None:
         logger.error("family_bootstrap_failed", error=str(e), error_type=type(e).__name__)
 
 
+async def _bootstrap_principals() -> None:
+    """Load the principals on boot. Like the family roster: never raises, but
+    loud in the logs. Without it nobody resolves and every inbound message is
+    rejected as unknown."""
+    from app.database import get_db_session
+    from app.services import principal_service
+    try:
+        async with get_db_session() as db:
+            added = await principal_service.seed_principals(db)
+            people = await principal_service.list_principals(db)
+            owner = next((p for p in people if p.is_owner), None)
+            logger.info("principals_bootstrap", added=added, total=len(people),
+                        has_owner=owner is not None)
+            if owner is None:
+                logger.error("principals_no_owner",
+                             hint="set PRINCIPALS_JSON with one entry marked is_owner")
+    except Exception as e:
+        logger.error("principals_bootstrap_failed", error=str(e), error_type=type(e).__name__)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Cordia starting up", model=settings.claude_model)
+    if settings.seed_principals_on_startup:
+        await _bootstrap_principals()
     if settings.seed_family_on_startup:
         await _bootstrap_family_data()
     setup_scheduler()

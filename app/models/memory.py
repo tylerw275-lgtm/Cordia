@@ -16,6 +16,9 @@ class Memory(Base):
     subject: Mapped[str] = mapped_column(String(255), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     family_member_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("family_members.id"), nullable=True)
+    # Which principal this belongs to. NULL means Cordia — every row
+    # predating multi-user was hers.
+    owner_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
     tags: Mapped[list[str] | None] = mapped_column(ARRAY(String), nullable=True)
     source: Mapped[str | None] = mapped_column(String(50), nullable=True)  # conversation | manual | sms
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

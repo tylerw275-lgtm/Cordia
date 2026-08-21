@@ -38,6 +38,8 @@ class Project(Base):
     # Priced options, each carrying the source it was read from.
     quotes: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     deliverable: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Which principal this belongs to. NULL means Cordia.
+    owner_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

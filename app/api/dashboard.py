@@ -316,6 +316,33 @@ async def dashboard(request: Request, secret: str = "") -> HTMLResponse:
             unmatched.append(entry)
     no_consent = sorted(n for k, n in people.items() if k not in matched_keys)
 
+    # ---- who else uses Cord ----------------------------------------------
+    principal_rows = []
+    try:
+        from app.services import principal_service
+        async with get_db_session() as db:
+            for person in await principal_service.list_principals(db):
+                shared = []
+                if not person.is_owner:
+                    for scope in principal_service.SHAREABLE_SCOPES:
+                        if await principal_service.has_access(db, person, scope):
+                            shared.append(scope.replace("_", " "))
+                reach = ", ".join(x for x in (
+                    _format_phone(person.phone) if person.phone else "",
+                    person.email or "",
+                ) if x)
+                principal_rows.append((
+                    person.name,
+                    "account holder" if person.is_owner
+                    else '<span class="pill ok">own workspace</span>',
+                    reach or "&mdash;",
+                    "everything (hers)" if person.is_owner
+                    else (", ".join(shared) if shared
+                          else '<span class="pill off">nothing shared</span>'),
+                ))
+    except Exception as e:
+        logger.error(f"Dashboard could not read principals: {e}")
+
     # ---- what it costs ---------------------------------------------------
     usage_month = usage_all = credit = None
     try:
@@ -536,6 +563,18 @@ see what they send back — ask Cord to give them circle access.</div>
 {_row("Naples house inbox", '<span class="pill ok">on</span>' if
       (settings.naples_email_address and settings.naples_email_app_password)
       else '<span class="pill off">not set up</span>')}
+</div>
+
+<div class="card">
+<h2>Who else uses Cord</h2>
+{_table(principal_rows, ["Name", "Role", "Reaches Cord by", "Can see of Cordia's"],
+        "Only Cordia is set up. Add others with PRINCIPALS_JSON in Railway.")}
+<div class="note">Everyone here has their <strong>own separate</strong> assistant.
+They see nothing of Cordia's except what is listed in the last column, and Cord
+never messages them on its own &mdash; the morning brief, birthday nudges and
+fare alerts all go to Cordia alone. To share something, Cordia tells Cord
+(&ldquo;Karie should be able to see my loyalty accounts&rdquo;). To tell someone
+one thing without giving standing access, she asks Cord to let them know.</div>
 </div>
 
 {usage_section}

@@ -30,4 +30,7 @@ class OutboundMessage(Base):
     approval_code: Mapped[str | None] = mapped_column(String(12), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Which principal approved this send. Cordia is the only one who can
+    # approve a message that goes out on her behalf.
+    approved_by: Mapped[str | None] = mapped_column(String(120), nullable=True)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

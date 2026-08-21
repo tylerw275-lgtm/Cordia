@@ -59,6 +59,14 @@ class Settings(BaseSettings):
     email_webhook_signing_secret: str = ""
     owner_email: str = ""  # Cordia's destination inbox
 
+    # The principals — Cordia and anyone she works with who gets their own full
+    # assistant (her husband, her assistant). Deliberately NOT in the repo: real
+    # names, mobile numbers and addresses, same reasoning as the family roster.
+    # Shape: [{"name": "...", "phone": "...", "email": "...", "is_owner": true}]
+    # Unset falls back to creating Cordia alone from the settings below.
+    principals_json: str = ""
+    seed_principals_on_startup: bool = True
+
     # The family roster itself, as JSON. Deliberately NOT in the repo: it holds
     # names, children's dates of birth, phone numbers and home addresses.
     family_seed_json: str = ""
@@ -134,9 +142,10 @@ class Settings(BaseSettings):
     enable_flight_search: bool = True
     enable_lease_review: bool = True
     enable_family_coordination: bool = True
-    # Outbound drafting/approval engine (contacts + draft/send tools).
-    # Off until the approval flow is verified end-to-end in staging.
-    enable_outbound: bool = False
+    # Outbound drafting/approval engine (contacts + draft/send tools). Nothing
+    # sends without an approval code the principal typed herself, checked
+    # against her own persisted messages — the model cannot assert it.
+    enable_outbound: bool = True
 
     # Naples house inbox — a second monitored Gmail (IMAP) for the property.
     # Cord summarizes inbound mail to Cordia and drafts replies for approval.

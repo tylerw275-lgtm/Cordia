@@ -193,12 +193,34 @@ TOOL_SCHEMAS = [
 ]
 
 
-async def _load(db: AsyncSession, project_id: str) -> Project | None:
+async def _visible(db: AsyncSession, actor):
+    """Whose projects this principal may read — their own, plus Cordia's if she
+    has shared them. None means unrestricted (single-user deployment)."""
+    if actor is None:
+        return None
+    from app.services import principal_service
+    return await principal_service.visible_scope(db, actor, "projects")
+
+
+async def _load(db: AsyncSession, project_id: str, actor=None) -> Project | None:
     try:
         pid = uuid.UUID(str(project_id))
     except (ValueError, AttributeError, TypeError):
         return None
-    return (await db.execute(select(Project).where(Project.id == pid))).scalars().first()
+    project = (await db.execute(select(Project).where(Project.id == pid))).scalars().first()
+    if project is None:
+        return None
+    scope = await _visible(db, actor)
+    if scope is not None:
+        allowed, unowned = scope
+        # A project someone may not see is reported as not found, not as
+        # forbidden: "you can't see that" confirms it exists, itself a leak.
+        if project.owner_user_id is None:
+            if not unowned:
+                return None
+        elif project.owner_user_id not in allowed:
+            return None
+    return project
 
 
 def _missing(project: Project) -> list[str]:
@@ -210,11 +232,14 @@ async def start_project_handler(db: AsyncSession, **kw) -> dict:
     kind = kw.get("kind") or playbooks.match(request)
     book = playbooks.get(kind)
 
+    actor = kw.get("acting_user")
     project = Project(
         title=kw["title"][:255],
         kind=kind if book else "derived",
         request=request,
         status="intake",
+        requested_by=getattr(actor, "name", None),
+        owner_user_id=getattr(actor, "id", None),
     )
 
     if book:
@@ -259,7 +284,7 @@ async def start_project_handler(db: AsyncSession, **kw) -> dict:
 
 
 async def save_project_questions_handler(db: AsyncSession, **kw) -> dict:
-    project = await _load(db, kw.get("project_id"))
+    project = await _load(db, kw.get("project_id"), kw.get("acting_user"))
     if project is None:
         return {"saved": False, "reason": "unknown_project"}
     questions = [q for q in (kw.get("questions") or []) if str(q).strip()]
@@ -284,7 +309,7 @@ def _norm(text: str) -> str:
 
 
 async def save_project_answers_handler(db: AsyncSession, **kw) -> dict:
-    project = await _load(db, kw.get("project_id"))
+    project = await _load(db, kw.get("project_id"), kw.get("acting_user"))
     if project is None:
         return {"saved": False, "reason": "unknown_project"}
 
@@ -334,7 +359,7 @@ async def save_project_answers_handler(db: AsyncSession, **kw) -> dict:
 
 
 async def get_project_handler(db: AsyncSession, **kw) -> dict:
-    project = await _load(db, kw.get("project_id"))
+    project = await _load(db, kw.get("project_id"), kw.get("acting_user"))
     if project is None:
         return {"found": False, "reason": "unknown_project"}
     book = playbooks.get(project.kind)
@@ -359,6 +384,12 @@ async def list_projects_handler(db: AsyncSession, **kw) -> dict:
     query = select(Project).order_by(Project.updated_at.desc()).limit(25)
     if kw.get("status"):
         query = query.where(Project.status == kw["status"])
+    scope = await _visible(db, kw.get("acting_user"))
+    if scope is not None:
+        from app.services import principal_service
+        query = query.where(
+            principal_service.scope_filter(Project.owner_user_id, *scope)
+        )
     rows = (await db.execute(query)).scalars().all()
     return {
         "count": len(rows),
@@ -371,7 +402,7 @@ async def list_projects_handler(db: AsyncSession, **kw) -> dict:
 
 
 async def save_project_findings_handler(db: AsyncSession, **kw) -> dict:
-    project = await _load(db, kw.get("project_id"))
+    project = await _load(db, kw.get("project_id"), kw.get("acting_user"))
     if project is None:
         return {"saved": False, "reason": "unknown_project"}
 
@@ -400,7 +431,7 @@ async def save_project_findings_handler(db: AsyncSession, **kw) -> dict:
 
 
 async def save_quote_options_handler(db: AsyncSession, **kw) -> dict:
-    project = await _load(db, kw.get("project_id"))
+    project = await _load(db, kw.get("project_id"), kw.get("acting_user"))
     if project is None:
         return {"saved": False, "reason": "unknown_project"}
 
@@ -436,7 +467,7 @@ async def save_quote_options_handler(db: AsyncSession, **kw) -> dict:
 
 
 async def deliver_project_handler(db: AsyncSession, **kw) -> dict:
-    project = await _load(db, kw.get("project_id"))
+    project = await _load(db, kw.get("project_id"), kw.get("acting_user"))
     if project is None:
         return {"delivered": False, "reason": "unknown_project"}
 

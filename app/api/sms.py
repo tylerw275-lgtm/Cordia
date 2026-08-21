@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.config import settings
-from app.services import claude_service, consent_service, family_circle_service, sms_service, twilio_service
+from app.services import claude_service, consent_service, family_circle_service, principal_service, sms_service, twilio_service
 from app.utils.phone import phones_match
 
 logger = logging.getLogger(__name__)
@@ -63,6 +63,12 @@ async def _resolve_sender(db: AsyncSession, phone: str):
     conversation. The consent form is publicly linked, so signing it is never
     by itself enough to reach her assistant.
     """
+    # Principals first: Cordia and anyone who gets their own full assistant.
+    principal = await principal_service.resolve_by_phone(db, phone)
+    if principal is not None:
+        return "owner", principal
+    # Config fallback so a deployment that has not set PRINCIPALS_JSON still
+    # resolves Cordia rather than rejecting her own number.
     if phones_match(phone, settings.cordia_phone_number) or phones_match(phone, settings.cordia_test_phone_number):
         return "owner", None
     member = await family_circle_service.resolve_member_by_phone(db, phone)
@@ -233,7 +239,10 @@ async def _process_inbound(db: AsyncSession, from_number: str, body: str, media:
     try:
         conversation = await claude_service.get_or_create_conversation(db, from_number)
         response_text = await claude_service.chat(
-            db, conversation.id, body, sender_role=role, sender_member=member, images=images
+            db, conversation.id, body, sender_role=role,
+            sender_member=member if role == "family" else None,
+            sender_user=member if role == "owner" else None,
+            images=images,
         )
         slow_note.cancel()
         await sms_service.send_sms(to=from_number, body=response_text)

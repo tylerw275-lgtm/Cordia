@@ -91,6 +91,13 @@ async def _resolve_trusted_contact(db: AsyncSession, sender: str):
 
 async def _resolve_sender(db: AsyncSession, sender: str):
     """Return (role, member, conversation_key)."""
+    # Karie works mostly by email, so this path matters as much as the SMS one.
+    from app.services import principal_service
+    principal = await principal_service.resolve_by_email(db, sender)
+    if principal is not None:
+        # Key the thread on the address they wrote from, so each principal has
+        # their own conversation rather than sharing Cordia's.
+        return "owner", principal, sender
     if settings.owner_email and sender == settings.owner_email.strip().lower():
         return "owner", None, (settings.cordia_phone_number or settings.owner_email)
     member = await family_circle_service.resolve_member_by_email(db, sender)
@@ -179,7 +186,10 @@ async def process_inbound_email(db: AsyncSession, sender: str, subject: str, bod
         return "captured_trusted_contact"
 
     response_text = await claude_service.chat(
-        db, conversation.id, body, sender_role=role, sender_member=member, channel="email"
+        db, conversation.id, body, sender_role=role,
+        sender_member=member if role == "family" else None,
+        sender_user=member if role == "owner" else None,
+        channel="email",
     )
     reply_subject = subject if subject.lower().startswith("re:") else f"Re: {subject or 'your note'}"
     await email_service.send_email(to=sender, subject=reply_subject, body_markdown=response_text)
