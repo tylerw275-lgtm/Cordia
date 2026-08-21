@@ -102,9 +102,13 @@ PLAYBOOKS: dict[str, dict] = {
             "occasion — days on the course, dinners out, beach, travel — with the "
             "local dress norms behind each call. If it is outfitting the place, "
             "organise room by room. For each item say why it is on the list, the "
-            "climate or use reason, and whether to bring it or buy it there. Name a "
-            "specific shop or street only with the source you found it in — she may "
-            "drive there on the strength of it."
+            "climate or use reason, and whether to bring it or buy it there. Where "
+            "you send her somewhere, name the actual business and where it is, with "
+            "the source — 'local florists' and 'the galleries on Third Street' are "
+            "categories she already knew about, and they cost her the trip to find "
+            "out. If you could not find one worth naming, say so rather than "
+            "gesturing at a category, and never sign off with a currency claim the "
+            "content above it does not earn."
         ),
     },
     "service_sourcing": {

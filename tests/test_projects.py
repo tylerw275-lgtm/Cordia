@@ -338,3 +338,37 @@ async def test_the_naples_ask_now_leads_with_the_scope_question(db):
     assert started["kind"] == "place_setup"
     first = started["intake_questions"][0].lower()
     assert "clothes" in first, "the ambiguity that produced the wrong answer is unasked"
+
+
+# --- a recommendation has to be a place she can go to -----------------------
+#
+# The Naples list closed with "Researched August 2026. Local vendor
+# recommendations current as of this date." Above it: two national chains
+# (Publix, CVS), two store names with no address or link, and two categories —
+# "local Naples florists" and "Third Street South galleries". The footer was
+# doing work the content had not earned, which is worse than omitting it,
+# because the footer is the part she trusts.
+
+def test_the_output_template_rejects_categories_as_recommendations():
+    template = playbooks.PLAYBOOKS["place_setup"]["output_template"].lower()
+    assert "categories" in template
+    assert "name the actual business" in template
+
+
+def test_the_output_template_forbids_an_unearned_currency_claim():
+    template = playbooks.PLAYBOOKS["place_setup"]["output_template"].lower()
+    assert "currency claim" in template and "does not earn" in template
+
+
+def test_saying_you_found_nothing_is_an_allowed_answer():
+    """Otherwise the pressure is to invent a category and call it advice."""
+    template = playbooks.PLAYBOOKS["place_setup"]["output_template"].lower()
+    assert "could not find one worth naming" in template
+
+
+def test_the_prompt_treats_provenance_as_a_claim_not_decoration():
+    from app.prompts.system_prompt import build_system_prompt
+
+    prompt = " ".join(b["text"] for b in build_system_prompt(None, family_roster="R")).lower()
+    assert "never claim work you did not do" in prompt
+    assert "a recommendation is a business she can go to" in prompt
