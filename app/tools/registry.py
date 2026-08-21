@@ -29,7 +29,17 @@ _BASE_HANDLERS: dict[str, Callable] = {
 }
 
 
+# Tools available when the model is reading THIRD-PARTY content (an email from
+# the Naples property inbox, or a captured message from a trusted contact).
+# Deliberately tiny: that content is attacker-controllable, so it must not be
+# able to reach the contact book, the outbound queue, memory, or any tool that
+# returns stored personal data. Capturing a date is the only write it needs.
+_UNTRUSTED_TOOL_NAMES = ("schedule_family_event",)
+
+
 def get_tool_schemas(role: str = "owner") -> list[dict]:
+    if role == "untrusted":
+        return [t for t in calendar_tools.TOOL_SCHEMAS if t["name"] in _UNTRUSTED_TOOL_NAMES]
     if role == "family":
         return list(family_circle_tools.FAMILY_TOOL_SCHEMAS)
     schemas = list(_BASE_TOOLS)
@@ -51,6 +61,10 @@ def get_tool_schemas(role: str = "owner") -> list[dict]:
 
 
 def get_handler(tool_name: str, role: str = "owner") -> Callable | None:
+    if role == "untrusted":
+        if tool_name not in _UNTRUSTED_TOOL_NAMES:
+            return None
+        return _BASE_HANDLERS.get(tool_name)
     if role == "family":
         return family_circle_tools.FAMILY_HANDLERS.get(tool_name)
     handlers = dict(_BASE_HANDLERS)

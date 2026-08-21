@@ -10,7 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models.conversation import Conversation, Message
 from app.prompts.prompt_profiles import get_profile, is_deep_work
-from app.prompts.system_prompt import build_family_system_prompt, build_system_prompt
+from app.prompts.system_prompt import (
+    build_family_system_prompt,
+    build_system_prompt,
+    build_untrusted_system_prompt,
+)
 from app.services import family_circle_service, family_service, memory_service
 from app.tools.registry import get_handler, get_tool_schemas
 
@@ -289,14 +293,17 @@ async def chat(
     if context_hint is None and sender_role != "family":
         context_hint = detect_context(user_message)
 
-    if sender_role == "family" and sender_member is not None:
+    if sender_role == "untrusted":
+        # Third-party content: no roster, no memory, minimal tools.
+        system = build_untrusted_system_prompt()
+    elif sender_role == "family" and sender_member is not None:
         system = await _build_family_system(db, sender_member)
     else:
         system = await _build_owner_system(db, user_message, context_hint, channel=channel)
 
     # Model-adaptive request shaping: bigger budget + thinking/effort for deep work
     profile = get_profile(settings.claude_model)
-    deep = sender_role != "family" and is_deep_work(user_message, context_hint)
+    deep = sender_role not in ("family", "untrusted") and is_deep_work(user_message, context_hint)
     max_tokens = profile.deep_max_tokens if deep else profile.max_tokens
     request_extras = dict(profile.deep_extras if deep else profile.normal_extras)
     if profile.prompting_notes:
