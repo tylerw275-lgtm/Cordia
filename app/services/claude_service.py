@@ -576,12 +576,18 @@ async def chat(
                             if sender_role == "family":
                                 result = await handler(db=db, acting_member=sender_member, **block.input)
                             else:
-                                # acting_user lets a handler scope its reads to
-                                # this principal. Every handler takes **kw, so
-                                # the ones that do not care simply ignore it.
-                                result = await handler(
-                                    db=db, acting_user=sender_user, **block.input
-                                )
+                                # Actor context goes ONLY to handlers that opted
+                                # in via @wants_actor. Passing it to everything
+                                # looked harmless — handlers all take **kw — but
+                                # several forward **kwargs straight into typed
+                                # functions, so memory, family, calendar and
+                                # flight search all raised TypeError and the
+                                # except below turned it into a silent
+                                # {"error": ...}. Opt-in means a future
+                                # dispatcher argument cannot repeat that.
+                                extra = ({"acting_user": sender_user}
+                                         if getattr(handler, "wants_actor", False) else {})
+                                result = await handler(db=db, **extra, **block.input)
                         except Exception as e:
                             logger.error(f"Tool {block.name} error: {e}")
                             result = {"error": str(e)}

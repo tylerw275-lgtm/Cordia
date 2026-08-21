@@ -27,6 +27,8 @@ from app.tools.contact_tools import resolve_recipient
 
 logger = logging.getLogger(__name__)
 
+from app.tools.actor import wants_actor
+
 TOOL_SCHEMAS = [
     {
         "name": "create_outbound_drafts",
@@ -334,10 +336,10 @@ async def send_outbound_handler(db: AsyncSession, **kw) -> dict:
             "message": "Report to Cordia what went out and anything skipped."}
 
 
-HANDLERS = {
+HANDLERS = wants_actor({
     "create_outbound_drafts": create_outbound_drafts_handler,
     "review_outbound_drafts": review_outbound_drafts_handler,
     "edit_outbound_draft": edit_outbound_draft_handler,
     "cancel_outbound": cancel_outbound_handler,
     "send_outbound": send_outbound_handler,
-}
+})
