@@ -169,7 +169,13 @@ OWNER_TOOL_SCHEMAS = [
     },
     {
         "name": "request_family_input",
-        "description": "Ask the family to contribute something — e.g. source gift ideas for a grandchild, or send their calendar dates. The relevant family members are prompted the next time they text in, and their answers come back to Cordia. Use when Cordia says yes to 'would you like me to ask them?'.",
+        "description": (
+            "Queue a question for the family — e.g. source gift ideas for a grandchild, or "
+            "send calendar dates. IMPORTANT: this is PASSIVE. It does not message anyone; the "
+            "question is shown to them the next time THEY text in, which may be never. Tell "
+            "Cordia that plainly, and if the person has consented to texts, offer to send it "
+            "to them now instead via create_outbound_drafts (which she then approves)."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -177,6 +183,27 @@ OWNER_TOOL_SCHEMAS = [
                 "about_name": {"type": "string", "description": "Who it concerns, if applicable"},
             },
             "required": ["prompt"],
+        },
+    },
+    {
+        "name": "ask_family_member",
+        "description": (
+            "Text a question directly to ONE family member who has joined the circle and "
+            "consented to messages — e.g. 'ask Kristen what Elijah is into right now'. This "
+            "actually sends; use it when Cordia wants an answer rather than a queued note. "
+            "Write the question warmly, in your own voice, on her behalf. Their reply comes "
+            "back to you and is passed to her. If the person hasn't consented, this reports "
+            "that instead of sending — then offer to email them or give Cordia a message to "
+            "forward herself."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Which family member to ask"},
+                "question": {"type": "string", "description": "The full message to send, written warmly and clearly on Cordia's behalf"},
+                "about_name": {"type": "string", "description": "Who the question concerns, if applicable"},
+            },
+            "required": ["name", "question"],
         },
     },
     {
@@ -220,7 +247,75 @@ async def request_family_input_handler(db: AsyncSession, **kw) -> dict:
     if kw.get("about_name"):
         about = await family_service.get_family_member_by_name(db, kw["about_name"])
     req = await circle.create_request(db, kw["prompt"], about_member_id=about.id if about else None)
-    return {"requested": True, "prompt": req.prompt, "message": "I'll gather this from the family and report back."}
+    return {
+        "queued": True,
+        "prompt": req.prompt,
+        "delivery": "passive_only",
+        "message": (
+            "Say plainly that this is queued for the next time they text in, not sent. "
+            "Then offer to send it directly: check list_sms_roster for who has consented "
+            "and, for those who have, draft a note with create_outbound_drafts for her "
+            "approval. If outbound sending isn't available, say so rather than implying "
+            "the question went out."
+        ),
+    }
+
+
+async def ask_family_member_handler(db: AsyncSession, **kw) -> dict:
+    """Send Cordia's question to a consented circle member, for real.
+
+    Guarded three ways: the person must already be in the family circle, must
+    have a live consent record, and the message is only ever the question Cord
+    composed — never stored contact data.
+    """
+    from sqlalchemy import text as sql_text
+    from app.services import sms_service
+    from app.utils.phone import normalize_phone
+
+    member = await family_service.get_family_member_by_name(db, kw["name"])
+    if not member:
+        return {"sent": False, "reason": "unknown_person",
+                "message": f"No family member on file named {kw['name']}."}
+    if not member.has_circle_access:
+        return {"sent": False, "reason": "not_in_circle",
+                "message": (f"{member.name} hasn't been given circle access yet. Offer to set "
+                            "that up with grant_family_circle_access first.")}
+    if not member.phone:
+        return {"sent": False, "reason": "no_number",
+                "message": f"No mobile number on file for {member.name} — ask Cordia for it."}
+
+    digits = normalize_phone(member.phone)
+    result = await db.execute(
+        sql_text(
+            "SELECT 1 FROM sms_consent "
+            "WHERE right(regexp_replace(phone, '[^0-9]', '', 'g'), 10) = :digits "
+            "AND consented_at IS NOT NULL AND opted_out_at IS NULL"
+        ),
+        {"digits": digits},
+    )
+    if result.first() is None:
+        return {"sent": False, "reason": "no_consent",
+                "message": (f"{member.name} hasn't consented to texts, so nothing was sent. "
+                            "Tell Cordia, and offer to email them or give her a note to "
+                            "forward herself.")}
+
+    about = None
+    if kw.get("about_name"):
+        about = await family_service.get_family_member_by_name(db, kw["about_name"])
+    await circle.create_request(
+        db, kw["question"], about_member_id=about.id if about else None, audience=str(member.id)
+    )
+
+    delivered = await sms_service.send_sms(to=member.phone, body=kw["question"])
+    if not delivered:
+        return {"sent": False, "reason": "suppressed",
+                "message": f"The message to {member.name} was not delivered — tell Cordia."}
+    return {
+        "sent": True,
+        "to": member.name,
+        "message": (f"Sent to {member.name}. Tell Cordia it's on its way and that you'll pass "
+                    "along the reply when it comes in."),
+    }
 
 
 async def get_family_circle_updates_handler(db: AsyncSession, **kw) -> dict:
@@ -262,6 +357,7 @@ async def share_event_with_family_handler(db: AsyncSession, **kw) -> dict:
 OWNER_EXTRA_HANDLERS = {
     "grant_family_circle_access": grant_family_circle_access_handler,
     "request_family_input": request_family_input_handler,
+    "ask_family_member": ask_family_member_handler,
     "get_family_circle_updates": get_family_circle_updates_handler,
     "share_event_with_family": share_event_with_family_handler,
 }
