@@ -367,11 +367,23 @@ async def _process_inbound(db: AsyncSession, from_number: str, body: str, media:
         await sms_service.send_sms(to=from_number, body=_STOP_CONFIRM, force=True)
         return
 
-    # Handle START / UNSTOP — re-subscription
+    # Re-subscription — but only for somebody who is not already subscribed.
+    #
+    # "YES" sat in this list unconditionally, so the most common reply in English
+    # was intercepted and answered with carrier boilerplate: Cord asked "want me
+    # to email you the list?", Cordia said "yes", and got the opt-in
+    # confirmation. Every yes/no question was a trap.
+    #
+    # Gating on the consent record is the compliant reading, not a way around
+    # it. Someone genuinely opted out still re-subscribes and still gets the
+    # confirmation. Someone already subscribed has nothing to subscribe to, so
+    # the word is ordinary conversation. STOP and HELP below stay unconditional
+    # — those are the carrier-mandated ones and must work in every state.
     if keyword in ("START", "UNSTOP", "YES"):
-        await _record_opt_in(db, from_number)
-        await sms_service.send_sms(to=from_number, body=_OPT_IN_CONFIRM)
-        return
+        if await consent_service.status_for(db, from_number) in ("opted_out", "no_consent"):
+            await _record_opt_in(db, from_number)
+            await sms_service.send_sms(to=from_number, body=_OPT_IN_CONFIRM)
+            return
 
     # Handle HELP / INFO
     if keyword in ("HELP", "INFO"):

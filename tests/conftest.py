@@ -75,6 +75,23 @@ async def db(_session_override):
         await session.rollback()
 
 
+@pytest.fixture(autouse=True)
+def _reset_inbound_state():
+    """Clear the module-level caches the SMS webhook keeps between requests.
+
+    Seen-message ids, per-conversation locks and the holding-note history all
+    live for the process's lifetime by design. Across a test session they leak:
+    two files using the same MessageSid means the second one is silently dropped
+    as a provider retry, and the failure looks like a logic bug in whichever
+    test happens to run second.
+    """
+    from app.api import sms
+
+    for cache in (sms._RECENT_MESSAGE_IDS, sms._INBOX, sms._INBOX_LOCKS, sms._RECENT_NOTES):
+        cache.clear()
+    yield
+
+
 @pytest_asyncio.fixture
 async def client(_session_override):
     # Point the app's get_db at the function-scoped test engine so requests
