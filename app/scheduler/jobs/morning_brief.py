@@ -9,7 +9,7 @@ from sqlalchemy import select
 from app.config import settings
 from app.database import get_db_session
 from app.models.trips import FlightWatch, PriceSnapshot
-from app.services import family_circle_service, family_service, sms_service
+from app.services import claude_service, family_circle_service, family_service, sms_service
 
 logger = logging.getLogger(__name__)
 
@@ -61,15 +61,20 @@ async def compose_brief(db) -> str | None:
 
     # If nothing notable beyond the greeting, skip the brief entirely
     if len(parts) == 1:
+        logger.info("Morning brief: nothing to report today, not sending")
         return None
     return "\n".join(parts)
 
 
 async def send_morning_brief() -> None:
     if not settings.cordia_phone_number:
+        logger.error("Morning brief skipped: CORDIA_PHONE_NUMBER is not configured")
         return
     async with get_db_session() as db:
         brief = await compose_brief(db)
-        if brief:
-            await sms_service.send_sms(to=settings.cordia_phone_number, body=brief)
+        if not brief:
+            return
+        if await sms_service.send_sms(to=settings.cordia_phone_number, body=brief):
             logger.info("Sent morning brief")
+            # So a reply ("book it", "tell me more") has the brief as context.
+            await claude_service.record_assistant_message(db, settings.cordia_phone_number, brief)

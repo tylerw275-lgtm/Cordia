@@ -73,7 +73,7 @@ async def test_send_report_email_handler_no_email_on_file(db, mocker):
 async def test_inbound_email_from_owner_replies(client, mocker):
     mocker.patch("app.config.settings.owner_email", "cordia@inbox.com")
     mocker.patch("app.config.settings.cordia_phone_number", "+15551112222")
-    mocker.patch("app.config.settings.email_inbound_secret", "")
+    mocker.patch("app.config.settings.email_inbound_secret", "inbound-secret")
     chat_mock = mocker.patch(
         "app.services.claude_service.chat", return_value="Here are 3 options..."
     )
@@ -82,7 +82,7 @@ async def test_inbound_email_from_owner_replies(client, mocker):
     )
 
     response = await client.post(
-        "/webhook/email",
+        "/webhook/email?secret=inbound-secret",
         json={"from": "Cordia <cordia@inbox.com>", "subject": "Flights to Italy", "text": "find me options"},
     )
     assert response.status_code == 200
@@ -99,11 +99,39 @@ async def test_inbound_email_from_owner_replies(client, mocker):
 @pytest.mark.asyncio
 async def test_inbound_email_unknown_sender_ignored(client, mocker):
     mocker.patch("app.config.settings.owner_email", "cordia@inbox.com")
+    mocker.patch("app.config.settings.email_inbound_secret", "inbound-secret")
     chat_mock = mocker.patch("app.services.claude_service.chat", return_value="x")
 
+    # Authenticated request, but the sender isn't on the allow-list.
     response = await client.post(
-        "/webhook/email",
+        "/webhook/email?secret=inbound-secret",
         json={"from": "stranger@nowhere.com", "subject": "hi", "text": "hello"},
     )
     assert response.status_code == 200
+    assert not chat_mock.called
+
+
+@pytest.mark.asyncio
+async def test_inbound_email_requires_the_secret(client, mocker):
+    mocker.patch("app.config.settings.email_inbound_secret", "inbound-secret")
+    chat_mock = mocker.patch("app.services.claude_service.chat", return_value="hi")
+    response = await client.post(
+        "/webhook/email",
+        json={"from": "Cordia <cordia@inbox.com>", "subject": "Hi", "text": "hello"},
+    )
+    assert response.status_code == 403
+    assert not chat_mock.called
+
+
+@pytest.mark.asyncio
+async def test_inbound_email_fails_closed_when_secret_unset(client, mocker):
+    # An unset secret used to mean "no authentication at all" — anyone could
+    # POST a forged sender and drive a model turn.
+    mocker.patch("app.config.settings.email_inbound_secret", "")
+    chat_mock = mocker.patch("app.services.claude_service.chat", return_value="hi")
+    response = await client.post(
+        "/webhook/email?secret=",
+        json={"from": "Cordia <cordia@inbox.com>", "subject": "Hi", "text": "hello"},
+    )
+    assert response.status_code == 403
     assert not chat_mock.called

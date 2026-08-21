@@ -107,7 +107,18 @@ def validate_twilio_signature(url: str, params: dict, signature: str) -> bool:
 
 
 async def verify_twilio_request(request: Request, form_data: dict) -> None:
+    # With no auth token the HMAC key is the empty string, so anyone could
+    # compute a valid signature — and a forged inbound SMS is processed with
+    # owner privileges, or hits the STOP/HELP branch and sends an SMS to an
+    # attacker-chosen number. Refuse rather than verify against "".
+    if not settings.twilio_auth_token:
+        logger.error("Twilio webhook rejected: TWILIO_AUTH_TOKEN is not configured")
+        raise HTTPException(status_code=403, detail="Signature verification unavailable")
     signature = request.headers.get("X-Twilio-Signature", "")
-    url = str(request.url)
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host = request.headers.get("x-forwarded-host", request.url.netloc)
+    url = f"{proto}://{host}{request.url.path}"
+    if request.url.query:
+        url += f"?{request.url.query}"
     if not validate_twilio_signature(url, form_data, signature):
         raise HTTPException(status_code=403, detail="Invalid Twilio signature")

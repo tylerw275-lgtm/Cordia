@@ -38,12 +38,17 @@ async def test_normalize_offer():
 
 
 @pytest.mark.asyncio
-async def test_search_flights_returns_empty_on_error(mocker):
+async def test_search_flights_raises_when_the_api_is_unavailable(mocker):
+    """A failed search must not look like "no flights".
+
+    Returning [] here meant an expired DUFFEL_ACCESS_TOKEN reached Cordia as
+    "No flights found for those parameters. Try different dates or airports."
+    """
     mocker.patch("httpx.AsyncClient.post", side_effect=Exception("API down"))
-    results = await duffel_service.search_flights(
-        origin="ATL", destination="MIA", depart_date="2026-11-27"
-    )
-    assert results == []
+    with pytest.raises(duffel_service.DuffelUnavailable):
+        await duffel_service.search_flights(
+            origin="ATL", destination="MIA", depart_date="2026-11-27"
+        )
 
 
 class _FakeResponse:
@@ -120,3 +125,21 @@ async def test_get_order_normalizes(mocker):
     assert order["origin"] == "ATL"
     assert order["destination"] == "MIA"
     assert order["passengers"] == ["Cordia Harrington"]
+
+
+@pytest.mark.asyncio
+async def test_search_tool_reports_unavailable_not_no_results(db, mocker):
+    """The tool result must tell Cord the search is broken, not send Cordia
+    chasing different dates."""
+    from app.tools import flight_tools
+
+    mocker.patch(
+        "app.services.duffel_service.search_flights",
+        side_effect=duffel_service.DuffelUnavailable("401 Unauthorized"),
+    )
+    result = await flight_tools.search_flights_handler(
+        db, origin="ATL", destination="MIA", depart_date="2026-11-27"
+    )
+    assert result["found"] is False
+    assert result["unavailable"] is True
+    assert "different dates" not in result["message"].lower().replace("do not suggest different dates or airports.", "")

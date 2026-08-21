@@ -1,6 +1,7 @@
 """Inbound email webhook (for the Resend provider). For the Gmail provider,
 the IMAP poller calls the same processing logic instead.
 """
+import hmac
 import logging
 
 from fastapi import APIRouter, Depends, Request, Response
@@ -33,10 +34,14 @@ async def _parse_inbound(request: Request) -> dict:
 
 @router.post("/webhook/email")
 async def receive_email(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
-    if settings.email_inbound_secret:
-        if request.query_params.get("secret") != settings.email_inbound_secret:
-            logger.warning("Inbound email rejected — bad secret")
-            return Response(status_code=403)
+    # Fail closed: an unset secret used to mean "no authentication at all", so
+    # anyone could POST a forged sender and drive a model turn.
+    supplied = request.query_params.get("secret") or request.headers.get("X-Webhook-Secret") or ""
+    if not settings.email_inbound_secret or not hmac.compare_digest(
+        supplied.encode("utf-8"), settings.email_inbound_secret.encode("utf-8")
+    ):
+        logger.warning("Inbound email rejected — missing or bad secret")
+        return Response(status_code=403)
 
     payload = await _parse_inbound(request)
     sender = email_inbound.extract_email(payload.get("from") or payload.get("sender") or payload.get("From"))

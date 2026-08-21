@@ -24,11 +24,11 @@ TOOL_SCHEMAS = [
                 },
                 "event_date": {"type": "string", "description": "Date in YYYY-MM-DD format"},
                 "notes": {"type": "string", "description": "Any additional notes about the event"},
-                "city": {"type": "string", "description": "City where it happens (e.g. 'Norfolk') — lets Cordia ask 'what's happening in Norfolk?'"},
+                "city": {"type": "string", "description": "City where it happens — lets Cordia ask 'what's happening in <city>?'"},
                 "family_member_names": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Family members this event involves (e.g. ['Elijah'])",
+                    "description": "Family members this event involves, by name",
                 },
                 "recurrence": {
                     "type": "string",
@@ -43,14 +43,14 @@ TOOL_SCHEMAS = [
         "name": "list_events_by_location",
         "description": (
             "List upcoming family events in or around a city (e.g. 'what's happening for the "
-            "kids in Norfolk?'). Matches events linked to family members who live there and "
+            "kids in <city>?'). Matches events linked to family members who live there and "
             "events whose notes mention the city. After presenting, offer flight options "
             "around the best dates when relevant."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "city": {"type": "string", "description": "City name (e.g. 'Norfolk')"},
+                "city": {"type": "string", "description": "City name"},
                 "days_ahead": {"type": "integer", "description": "How far ahead to look (default 120 days)"},
             },
             "required": ["city"],

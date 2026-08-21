@@ -27,14 +27,14 @@ FAMILY_TOOL_SCHEMAS = [
             "type": "object",
             "properties": {
                 "content": {"type": "string", "description": "The gift idea, in their words"},
-                "about_name": {"type": "string", "description": "Who the gift is for (e.g. 'Brighton'). Omit if it's for the person texting."},
+                "about_name": {"type": "string", "description": "Who the gift is for (e.g. one of the grandchildren). Omit if it's for the person texting."},
             },
             "required": ["content"],
         },
     },
     {
         "name": "share_engagement_tip",
-        "description": "Record a helpful tip about how this person likes Cordia to connect with them or their family (e.g. 'I love a phone call over text', 'Brighton lights up over one-on-one time').",
+        "description": "Record a helpful tip about how this person likes Cordia to connect with them or their family (e.g. 'I love a phone call over text', 'he lights up over one-on-one time').",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -50,7 +50,7 @@ FAMILY_TOOL_SCHEMAS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "name": {"type": "string", "description": "Family member to update (e.g. 'Elijah')"},
+                "name": {"type": "string", "description": "Family member to update, by name"},
                 "interests": {"type": "string", "description": "Comma-separated interests to add"},
                 "notes": {"type": "string", "description": "A personality/context note to add"},
             },
@@ -163,7 +163,7 @@ OWNER_TOOL_SCHEMAS = [
         "description": "Give a family member access to contribute to the family circle. After this, they text the assistant's number once to opt in. Use when Cordia wants someone to be able to share ideas, calendars, or tips.",
         "input_schema": {
             "type": "object",
-            "properties": {"name": {"type": "string", "description": "Family member's name (e.g. 'Aaron')"}},
+            "properties": {"name": {"type": "string", "description": "Family member's name"}},
             "required": ["name"],
         },
     },
@@ -173,8 +173,8 @@ OWNER_TOOL_SCHEMAS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "prompt": {"type": "string", "description": "What to ask the family for (e.g. 'gift ideas for Bea's birthday')"},
-                "about_name": {"type": "string", "description": "Who it concerns, if applicable (e.g. 'Bea')"},
+                "prompt": {"type": "string", "description": "What to ask the family for (e.g. 'gift ideas for a grandchild's birthday')"},
+                "about_name": {"type": "string", "description": "Who it concerns, if applicable"},
             },
             "required": ["prompt"],
         },
@@ -246,9 +246,11 @@ async def get_family_circle_updates_handler(db: AsyncSession, **kw) -> dict:
 async def share_event_with_family_handler(db: AsyncSession, **kw) -> dict:
     from sqlalchemy import select, func
     from app.models.family import FamilyEvent
-    q = f"%{kw['event_title'].lower()}%"
+    from app.services.family_service import like_escape
+    q = f"%{like_escape(kw['event_title'].lower())}%"
     result = await db.execute(
-        select(FamilyEvent).where(func.lower(FamilyEvent.title).like(q)).where(FamilyEvent.event_date >= date.today())
+        select(FamilyEvent).where(func.lower(FamilyEvent.title).like(q, escape="\\"))
+        .where(FamilyEvent.event_date >= date.today())
     )
     events = result.scalars().all()
     for e in events:

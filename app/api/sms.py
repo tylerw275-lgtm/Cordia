@@ -1,9 +1,10 @@
 import asyncio
+import hmac
 import logging
 from collections import OrderedDict
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Form, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Request, Response
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -156,7 +157,8 @@ async def _process_inbound(db: AsyncSession, from_number: str, body: str, media:
     # Handle STOP — providers also handle this natively, but we record it
     if keyword in ("STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT", "OPTOUT", "REVOKE"):
         await _record_opt_out(db, from_number)
-        await sms_service.send_sms(to=from_number, body=_STOP_CONFIRM)
+        # force: the opt-out confirmation itself must reach a now-opted-out number
+        await sms_service.send_sms(to=from_number, body=_STOP_CONFIRM, force=True)
         return
 
     # Handle START / UNSTOP — re-subscription
@@ -167,7 +169,8 @@ async def _process_inbound(db: AsyncSession, from_number: str, body: str, media:
 
     # Handle HELP / INFO
     if keyword in ("HELP", "INFO"):
-        await sms_service.send_sms(to=from_number, body=_HELP_MSG)
+        # force: HELP is carrier-mandated and must always be answered
+        await sms_service.send_sms(to=from_number, body=_HELP_MSG, force=True)
         return
 
     # Resolve who this is: Cordia (owner), an opted-in family member, or unknown
@@ -256,10 +259,12 @@ async def receive_signalhouse_sms(request: Request, background: BackgroundTasks)
     messageBody, direction: "INBOUND", ...}}}. Other event types (delivery
     receipts, balance alerts) are acknowledged and ignored."""
     supplied = request.query_params.get("secret") or request.headers.get("X-Webhook-Secret", "")
-    if not settings.signalhouse_webhook_secret or supplied != settings.signalhouse_webhook_secret:
+    if not settings.signalhouse_webhook_secret or not hmac.compare_digest(
+        supplied.encode("utf-8"), settings.signalhouse_webhook_secret.encode("utf-8")
+    ):
         if not settings.debug:
             logger.warning("Signal House webhook rejected: bad or missing shared secret")
-            return {"status": "unauthorized"}
+            raise HTTPException(status_code=401, detail="Unauthorized")
 
     try:
         payload = await request.json()

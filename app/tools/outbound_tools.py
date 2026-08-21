@@ -1,14 +1,20 @@
 """Outbound drafting & approval engine (owner-only).
 
 The only path by which Cord sends anything to a third party. Invariants:
-- Drafts never send themselves; send_outbound requires Cordia's explicit
-  approval (approved_by_cordia=true, set only after she says "send").
+- Drafts never send themselves. send_outbound requires an approval code that
+  is generated server-side at draft time and must appear in one of Cordia's own
+  inbound messages — a boolean the model sets itself is not an approval,
+  because anything that can call the tool can also set the boolean.
 - SMS goes only to numbers with a live consent record (opted in, not opted
   out); everyone else is emailed or skipped with a report.
 - Real addresses are resolved server-side at draft time and never returned
   to the model.
 """
+import hmac
 import logging
+import secrets
+
+from app.utils.phone import normalize_phone
 import uuid
 from datetime import datetime, timezone
 
@@ -95,9 +101,9 @@ TOOL_SCHEMAS = [
             "type": "object",
             "properties": {
                 "batch_id": {"type": "string", "description": "Batch to send; omit for the most recent batch"},
-                "approved_by_cordia": {"type": "boolean", "description": "Set true ONLY if Cordia explicitly said to send in this conversation"},
+                "approval_code": {"type": "string", "description": "The code Cordia texted back to approve this batch. You cannot supply this yourself — she must send it."},
             },
-            "required": ["approved_by_cordia"],
+            "required": ["approval_code"],
         },
     },
 ]
@@ -115,8 +121,15 @@ def mask_address(addr: str | None) -> str:
 
 async def _sms_consent_ok(db: AsyncSession, phone: str) -> bool:
     result = await db.execute(
-        text("SELECT 1 FROM sms_consent WHERE phone = :phone AND consented_at IS NOT NULL AND opted_out_at IS NULL"),
-        {"phone": phone},
+        # Match on the last 10 digits: consent rows are always +E164, but family
+        # profiles carry bare digits, so an opted-in son read as "not opted in"
+        # and his drafts were silently rerouted to email.
+        text(
+            "SELECT 1 FROM sms_consent "
+            "WHERE right(regexp_replace(phone, '[^0-9]', '', 'g'), 10) = :digits "
+            "AND consented_at IS NOT NULL AND opted_out_at IS NULL"
+        ),
+        {"digits": normalize_phone(phone)},
     )
     return result.first() is not None
 
@@ -139,6 +152,8 @@ async def _batch_drafts(db: AsyncSession, batch_id: str) -> list[OutboundMessage
 async def create_outbound_drafts_handler(db: AsyncSession, **kw) -> dict:
     topic = (kw.get("topic") or "batch").strip().lower().replace(" ", "-")[:20]
     batch_id = f"{topic}-{uuid.uuid4().hex[:8]}"
+    # Server-side approval code. Cordia has to send this back before anything goes out.
+    approval_code = f"{secrets.randbelow(1000000):06d}"
     drafted, problems = [], []
     for m in kw.get("messages", []):
         recipient = await resolve_recipient(db, m["to_name"])
@@ -165,6 +180,7 @@ async def create_outbound_drafts_handler(db: AsyncSession, **kw) -> dict:
         draft = OutboundMessage(
             batch_id=batch_id, channel=channel, to_name=recipient["name"],
             to_address=address, subject=m.get("subject"), body=m["body"],
+            approval_code=approval_code,
         )
         db.add(draft)
         drafted.append({"to_name": recipient["name"], "channel": channel,
@@ -175,7 +191,12 @@ async def create_outbound_drafts_handler(db: AsyncSession, **kw) -> dict:
         "drafted": drafted,
         "problems": problems,
         "status": "drafts_stored_NOT_sent",
-        "message": "Show Cordia the recipients and previews, resolve any problems, and send only after she approves.",
+        "approval_code": approval_code,
+        "message": (
+            "Show Cordia the recipients and previews, resolve any problems, then ask her to "
+            f"reply with the code {approval_code} to approve. Nothing sends until she sends "
+            "that code herself — you cannot approve this on her behalf."
+        ),
     }
 
 
@@ -223,15 +244,47 @@ async def cancel_outbound_handler(db: AsyncSession, **kw) -> dict:
     return {"canceled": canceled, "batch_id": batch_id}
 
 
+async def _code_confirmed_by_owner(db: AsyncSession, code: str) -> bool:
+    """True if the code appears in a message Cordia actually sent.
+
+    Checked against persisted inbound user turns rather than trusting the tool
+    input, so a model that merely knows the code still cannot approve on her
+    behalf — she has to have typed it.
+    """
+    from app.models.conversation import Message
+
+    if not code:
+        return False
+    result = await db.execute(
+        select(Message)
+        .where(Message.role == "user")
+        .where(Message.content.contains(code))
+        .limit(1)
+    )
+    return result.scalars().first() is not None
+
+
 async def send_outbound_handler(db: AsyncSession, **kw) -> dict:
-    if not kw.get("approved_by_cordia"):
-        return {"sent": 0, "blocked": True,
-                "message": "Not sent — Cordia has not approved this batch. Show her the drafts and ask first."}
     batch_id = kw.get("batch_id") or await _latest_batch_id(db)
     if not batch_id:
         return {"sent": 0, "message": "No draft batches on file."}
+
+    drafts = await _batch_drafts(db, batch_id)
+    expected = next((d.approval_code for d in drafts if d.approval_code), None)
+    supplied = (kw.get("approval_code") or "").strip()
+
+    if not expected:
+        return {"sent": 0, "blocked": True,
+                "message": "This batch has no approval code and cannot be sent. Redraft it."}
+    if not hmac.compare_digest(supplied, expected):
+        return {"sent": 0, "blocked": True,
+                "message": "Not sent — that approval code doesn't match this batch. Ask Cordia to text the code back."}
+    if not await _code_confirmed_by_owner(db, expected):
+        return {"sent": 0, "blocked": True,
+                "message": ("Not sent — Cordia hasn't sent the approval code yet. Show her the drafts "
+                            "and ask her to reply with the code. Do not send it on her behalf.")}
     sent, skipped = [], []
-    for d in await _batch_drafts(db, batch_id):
+    for d in drafts:
         if d.status != "draft":
             continue
         try:

@@ -107,7 +107,7 @@ async def get_unsurfaced_inputs(db: AsyncSession) -> Sequence[FamilyInput]:
 
 
 async def get_inputs_about(db: AsyncSession, member_id, kinds: list[str] | None = None) -> Sequence[FamilyInput]:
-    """All inputs family members have shared about a given person (e.g. gift ideas for Bea)."""
+    """All inputs family members have shared about a given person (e.g. gift ideas for a grandchild)."""
     stmt = select(FamilyInput).where(FamilyInput.about_member_id == member_id)
     if kinds:
         stmt = stmt.where(FamilyInput.kind.in_(kinds))

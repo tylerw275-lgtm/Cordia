@@ -5,7 +5,7 @@ from app.services import family_service
 TOOL_SCHEMAS = [
     {
         "name": "get_family_member",
-        "description": "Retrieve a family member's profile including interests, personality, location, birthday, and aliases. Always call this before planning a grandchild trip. Also works if Cordia uses an old name (e.g. 'Brad' for Aaron, 'Hunter' for Ryan).",
+        "description": "Retrieve a family member's profile including interests, personality, location and birthday. Always call this before planning a grandchild trip. The lookup also succeeds if Cordia uses an old name for someone.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -70,6 +70,26 @@ TOOL_SCHEMAS = [
         },
     },
     {
+        "name": "add_family_member",
+        "description": "Add a NEW person to Cordia's family profiles — a new grandchild, a new in-law, someone not already in the FAMILY ROSTER. Check the roster first; use update_family_member_notes for someone already there.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Full name"},
+                "relationship": {"type": "string", "description": "e.g. grandson, granddaughter, daughter-in-law, in-law"},
+                "nickname": {"type": "string", "description": "What the family calls them, if different"},
+                "gender": {"type": "string", "enum": ["male", "female", "other"]},
+                "birthday": {"type": "string", "description": "YYYY-MM-DD, if known"},
+                "parent_name": {"type": "string", "description": "For a grandchild: which of Cordia's children is their parent"},
+                "city": {"type": "string"},
+                "state": {"type": "string"},
+                "interests": {"type": "array", "items": {"type": "string"}},
+                "personality_notes": {"type": "string"},
+            },
+            "required": ["name", "relationship"],
+        },
+    },
+    {
         "name": "update_family_member_notes",
         "description": "Update a family member's interests or personality notes when Cordia shares new information about them. Use this to keep profiles current as you learn more.",
         "input_schema": {
@@ -78,7 +98,7 @@ TOOL_SCHEMAS = [
                 "name": {"type": "string", "description": "Family member's name"},
                 "field": {
                     "type": "string",
-                    "enum": ["interests", "personality_notes", "email", "phone", "address", "grade_level"],
+                    "enum": ["interests", "personality_notes", "nickname", "school_name", "grade_level"],
                     "description": "Which field to update",
                 },
                 "value": {"type": "string", "description": "New value or addition to append"},
@@ -98,15 +118,16 @@ async def get_family_member_handler(db: AsyncSession, name: str, **kwargs) -> di
         "id": str(member.id),
         "name": member.name,
         "nickname": member.nickname,
-        "aliases": member.aliases or [],
         "relationship": member.relationship,
         "gender": member.gender,
         "city": member.city,
         "state": member.state,
-        "address": member.address,
         "birthday": member.birthday.isoformat() if member.birthday else None,
-        "email": member.email,
-        "phone": member.phone,
+        # Contact details are deliberately withheld — the system prompt forbids
+        # ever reading them back, and the send paths resolve addresses
+        # server-side. Presence flags only, matching find_contact.
+        "has_email": bool(member.email),
+        "has_phone": bool(member.phone),
         "school_name": member.school_name,
         "grade_level": member.grade_level,
         "interests": member.interests or [],
@@ -122,7 +143,6 @@ async def list_family_members_handler(db: AsyncSession, **kwargs) -> dict:
             {
                 "name": m.name,
                 "nickname": m.nickname,
-                "aliases": m.aliases or [],
                 "relationship": m.relationship,
                 "gender": m.gender,
                 "city": m.city,
@@ -181,3 +201,39 @@ async def log_grandkid_activity_handler(
 async def update_family_member_notes_handler(db: AsyncSession, name: str, field: str, value: str, **kwargs) -> dict:
     success = await family_service.update_family_member_notes(db, name, field, value)
     return {"updated": success, "name": name, "field": field}
+
+
+async def add_family_member_handler(db: AsyncSession, **kwargs) -> dict:
+    """Create a new family member. Refuses if the name already exists so a
+    typo can't silently fork someone into two profiles."""
+    from datetime import date as _date
+
+    name = (kwargs.get("name") or "").strip()
+    if not name:
+        return {"added": False, "message": "A name is required."}
+
+    existing = await family_service.get_family_member_by_name(db, name)
+    if existing is not None:
+        return {
+            "added": False,
+            "existing_name": existing.name,
+            "message": f"{existing.name} is already in the family profiles — use update_family_member_notes instead.",
+        }
+
+    parent_name = kwargs.pop("parent_name", None)
+    birthday = kwargs.pop("birthday", None)
+    if birthday:
+        try:
+            kwargs["birthday"] = _date.fromisoformat(birthday)
+        except ValueError:
+            return {"added": False, "message": f"Couldn't read the birthday '{birthday}' — use YYYY-MM-DD."}
+
+    member = await family_service.create_family_member(db, **kwargs)
+
+    if parent_name:
+        parent = await family_service.get_family_member_by_name(db, parent_name)
+        if parent is not None:
+            member.parent_id = parent.id
+            await db.commit()
+
+    return {"added": True, "name": member.name, "relationship": member.relationship}

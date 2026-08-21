@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
@@ -56,3 +58,21 @@ async def client(engine):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         yield c
     app.dependency_overrides.clear()
+
+
+FIXTURE_DIR = Path(__file__).parent / "fixtures"
+
+
+@pytest.fixture
+def seed_doc_raw() -> str:
+    """The raw JSON of an anonymized roster, structurally isomorphic to the
+    real one: a single-word name, a daughter-in-law with no `parent`, a shared
+    surname, aliases and contact details, and members with and without birthdays."""
+    return (FIXTURE_DIR / "family_seed_sample.json").read_text(encoding="utf-8")
+
+
+@pytest.fixture
+def seed_doc(seed_doc_raw):
+    from app.data.family_seed_loader import parse_seed_document
+
+    return parse_seed_document(seed_doc_raw)

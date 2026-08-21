@@ -24,6 +24,10 @@ class OutboundMessage(Base):
     subject: Mapped[str | None] = mapped_column(String(255), nullable=True)  # email only
     body: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(15), nullable=False, default="draft")  # draft | sent | skipped | canceled
+    # Generated server-side at draft time. send_outbound will not send unless
+    # this code appears in one of Cordia's own inbound messages — an approval
+    # the model cannot manufacture for itself.
+    approval_code: Mapped[str | None] = mapped_column(String(12), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

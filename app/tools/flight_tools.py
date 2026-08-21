@@ -163,7 +163,18 @@ async def search_flights_handler(db: AsyncSession, **kwargs) -> dict:
     if prefs.get("cabin") and "cabin" not in kwargs:
         kwargs["cabin"] = prefs["cabin"]
     # Pull a wider pool so preference filtering still leaves enough options
-    flights = await duffel_service.search_flights(max_results=max(max_results * 3, 15), **kwargs)
+    try:
+        flights = await duffel_service.search_flights(max_results=max(max_results * 3, 15), **kwargs)
+    except duffel_service.DuffelUnavailable:
+        return {
+            "found": False,
+            "unavailable": True,
+            "message": (
+                "Flight search is unavailable right now — this is a problem on our side, "
+                "not with her search. Tell her you can't check fares at the moment and "
+                "offer to try again shortly. Do NOT suggest different dates or airports."
+            ),
+        }
     if not flights:
         return {"found": False, "message": "No flights found for those parameters. Try different dates or airports."}
     matching, tradeoffs = travel_prefs.apply_preferences(flights, prefs)
