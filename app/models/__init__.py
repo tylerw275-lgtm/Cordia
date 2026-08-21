@@ -10,6 +10,7 @@ from app.models.family import (
 from app.models.loyalty import LoyaltyAccount
 from app.models.memory import Memory
 from app.models.outbound import OutboundMessage
+from app.models.project import Project
 from app.models.real_estate import Lease, LeaseClause, LeaseReminder
 from app.models.usage import UsageEvent
 from app.models.trips import FlightWatch, PriceSnapshot, Trip
@@ -32,6 +33,7 @@ __all__ = [
     "Message",
     "OutboundMessage",
     "PriceSnapshot",
+    "Project",
     "Trip",
     "UsageEvent",
     "User",

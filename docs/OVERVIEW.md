@@ -93,6 +93,22 @@ SMS program name remains "Cordia AI by AI-Gen Partners" for compliance.)
   described as "in development," and Cordia can ask for features she wants — they're
   logged for the team (`request_feature`).
 
+**Projects — it interviews her before it answers**
+- A one-line ask that deserves real work ("what should I pack for the Naples house",
+  "find me a car service for Thursday") no longer gets an instant generic reply. Cord
+  opens a *project*, sends one numbered set of questions, waits, researches what it
+  can look up itself, then delivers.
+- Known shapes (outfitting a place, sourcing a service, planning an event, researching
+  a decision) carry a stock interview and research checklist. Anything unanticipated
+  gets an interview Cord **designs** from a set of domain-agnostic axes — place, time,
+  people, scale, purpose, constraints, existing state — and commits before answering.
+- It only asks what it cannot look up. Weather, vendor hours, local norms are its job.
+- Priced options must carry the page the price came from; an uncited price is refused.
+  Cord researches up to the payment line and hands over a link or a number — it never
+  asks for or accepts a card.
+- Projects survive the gaps: she can answer three questions on Tuesday and the rest on
+  Thursday without being re-asked anything.
+
 **Live web research**
 - Cord can search the web and read pages, so prices, hours, addresses, availability
   and seasonal conditions come from a page it actually read rather than memory —
@@ -147,7 +163,7 @@ at cordia.aigenpartners.com; the opt-in page carries the consent form itself.
 
 **Stack**
 - Python + **FastAPI**; **PostgreSQL** via async SQLAlchemy; **Alembic** migrations
-  (through `012_usage_events`); **APScheduler** for recurring jobs, on an
+  (through `013_projects`); **APScheduler** for recurring jobs, on an
   explicit `SCHEDULER_TIMEZONE`.
 - **SMS:** Signal House (10DLC campaign approved). Inbound webhook
   `POST /webhook/signalhouse` (shared-secret auth, constant-time compare); outbound via

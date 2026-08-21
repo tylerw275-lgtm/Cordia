@@ -1,7 +1,7 @@
 from typing import Callable
 
 from app.config import settings
-from app.tools import calendar_tools, consent_tools, email_tools, family_circle_tools, family_tools, feature_tools, lease_tools, loyalty_tools, memory_tools
+from app.tools import calendar_tools, consent_tools, email_tools, project_tools, family_circle_tools, family_tools, feature_tools, lease_tools, loyalty_tools, memory_tools
 
 
 def _roster_schemas() -> list[dict]:
@@ -23,6 +23,9 @@ _BASE_TOOLS: list[dict] = [
     # Approving who may reach the assistant. Always on, like the roster view:
     # the gate has to be operable the moment someone signs the public form.
     *consent_tools.TOOL_SCHEMAS,
+    # Interview-then-research. Always on: the whole point is that a big ask gets
+    # an interview rather than an instant generic answer.
+    *project_tools.TOOL_SCHEMAS,
 ]
 
 _BASE_HANDLERS: dict[str, Callable] = {
@@ -41,6 +44,7 @@ _BASE_HANDLERS: dict[str, Callable] = {
     **feature_tools.HANDLERS,
     **loyalty_tools.HANDLERS,
     **consent_tools.HANDLERS,
+    **project_tools.HANDLERS,
 }
 
 
