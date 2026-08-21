@@ -87,7 +87,9 @@ TOOL_SCHEMAS = [
             "Cordia's growing SMS circle: who has consented and can be texted, who's been "
             "invited but hasn't signed the consent form yet (worth a nudge from her), who "
             "opted out, and who has a phone on file but no invite yet. Names only — never "
-            "numbers."
+            "numbers. ALWAYS call this fresh when she asks who has consented — people sign "
+            "the form between conversations, so an answer you gave earlier is probably out "
+            "of date. Never repeat a previous answer without re-checking."
         ),
         "input_schema": {"type": "object", "properties": {}},
     },
