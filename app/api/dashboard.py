@@ -313,6 +313,12 @@ def _local(dt, fmt: str = "%b %-d, %Y at %-I:%M %p") -> str:
     return local.strftime(fmt)
 
 
+def _escape(text) -> str:
+    """This table renders provider error text on a web page."""
+    from html import escape
+    return escape(str(text or ""))
+
+
 def _pill(ok: bool, yes: str = "Working", no: str = "Not set") -> str:
     return f'<span class="pill {"ok" if ok else "bad"}">{yes if ok else no}</span>'
 
@@ -595,11 +601,14 @@ nothing before this ledger existed is counted.</div>
         '<div class="note">When Cord replies &ldquo;Something went wrong on my end&rdquo;, '
         'this is what actually broke. The message text is never stored here.</div>'
         + _table(
-            [(_local(f["when"]), f["where"], f["error_type"],
+            [(_local(f["when"]), f["where"],
+              f["error_type"] + (
+                  f'<div style="color:#6b7280;font-size:.82rem;margin-top:3px">'
+                  f'{_escape(f["detail"])}</div>' if f.get("detail") else ""),
               _format_phone(f["actor"]) if f["actor"] and "@" not in str(f["actor"])
               else (f["actor"] or "&mdash;"))
              for f in failures],
-            ["When", "Where", "Error", "Who was affected"], "",
+            ["When", "Where", "What went wrong", "Who was affected"], "",
         )
         + "</div>"
     )

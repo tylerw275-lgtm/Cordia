@@ -221,17 +221,40 @@ async def credit_status(db: AsyncSession) -> dict:
     }
 
 
+# Exceptions whose message text comes from the provider rather than from
+# anything the user typed. For these the detail is safe to keep, and it is the
+# difference between "BadRequestError" and "tools: Tool names must be unique".
+_PROVIDER_ERROR_MODULES = ("anthropic", "httpx", "sqlalchemy", "asyncpg")
+
+
+def _safe_detail(exc: BaseException) -> str | None:
+    """The provider's own description of a failure, if that is what this is.
+
+    A traceback can quote the user's message straight back, and this table gets
+    rendered on a web page — so the text is kept only for errors raised by a
+    library, never for a generic exception whose message could be anything. The
+    module the exception class came from is the test.
+    """
+    module = (type(exc).__module__ or "").split(".")[0]
+    if module not in _PROVIDER_ERROR_MODULES:
+        return None
+    text = str(exc).strip()
+    return text[:400] if text else None
+
+
 async def record_error(where: str, exc: BaseException, actor: str | None = None) -> None:
     """Record that something broke, so a failure is visible without shell access.
 
-    Deliberately stores the exception *type* and where it happened, never the
-    message body or the exception text — a traceback can quote the user's own
-    message straight back into a table the dashboard renders.
+    Always stores the exception type and where it happened. Stores the message
+    too when it came from a library rather than from user input — diagnosing the
+    same failure twice by asking someone to go and read a log is the thing this
+    is meant to avoid.
     """
-    await record_standalone(
-        "error", actor=actor, cost_usd=0.0,
-        details={"where": where, "error_type": type(exc).__name__},
-    )
+    details = {"where": where, "error_type": type(exc).__name__}
+    detail = _safe_detail(exc)
+    if detail:
+        details["detail"] = detail
+    await record_standalone("error", actor=actor, cost_usd=0.0, details=details)
 
 
 async def record_email(address: str, outbound: bool) -> None:
@@ -309,6 +332,7 @@ async def recent_errors(db: AsyncSession, limit: int = 10) -> list[dict]:
             "when": r.occurred_at,
             "where": (r.details or {}).get("where", "unknown"),
             "error_type": (r.details or {}).get("error_type", "unknown"),
+            "detail": (r.details or {}).get("detail"),
             "actor": r.actor,
         }
         for r in rows

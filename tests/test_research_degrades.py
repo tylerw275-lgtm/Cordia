@@ -186,3 +186,75 @@ async def test_recent_failures_reach_the_dashboard(db, client, mocker):
     assert "Recent failures" in html
     assert "BadRequestError" in html
     assert "(615) 853-9483" in html
+
+
+# --- a failure should explain itself without a trip to the logs -------------
+
+@pytest.mark.asyncio
+async def test_a_provider_error_keeps_its_message(db):
+    """Diagnosing the same failure twice by asking someone to go read a log is
+    exactly what this table exists to avoid. "BadRequestError" alone did that."""
+    await usage_service.record_error(
+        "sms_reply", _bad_request("tools: Tool names must be unique."), actor="+16157080002"
+    )
+
+    row = (await db.execute(select(UsageEvent))).scalars().one()
+    assert row.details["error_type"] == "BadRequestError"
+    assert "Tool names must be unique" in row.details["detail"]
+
+
+@pytest.mark.asyncio
+async def test_a_generic_exception_still_keeps_its_message_out(db):
+    """A traceback can quote the user's own text, and this table is rendered on
+    a web page. Only library-raised errors are safe to keep."""
+    await usage_service.record_error(
+        "sms_reply", ValueError("failed on: 'my bank password is hunter2'")
+    )
+
+    row = (await db.execute(select(UsageEvent))).scalars().one()
+    assert "detail" not in row.details
+    assert "hunter2" not in str(row.details)
+
+
+@pytest.mark.asyncio
+async def test_the_detail_is_capped(db):
+    from app.services.usage_service import _safe_detail
+
+    request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    response = httpx.Response(400, request=request, json={})
+    assert len(_safe_detail(anthropic.BadRequestError("x" * 5000, response=response, body=None))) <= 400
+
+
+@pytest.mark.asyncio
+async def test_the_dashboard_shows_what_went_wrong_not_just_that_it_did(db, client, mocker):
+    from app.api import dashboard as d
+
+    mocker.patch.object(settings, "dashboard_password", "pw")
+    await usage_service.record_error(
+        "sms_reply", _bad_request("tools: Tool names must be unique."), actor="+16157080002"
+    )
+
+    client.cookies.set(d._COOKIE, d._issue_session())
+    html = (await client.get("/health/dashboard")).text
+
+    assert "BadRequestError" in html
+    assert "Tool names must be unique" in html
+
+
+@pytest.mark.asyncio
+async def test_provider_text_is_escaped_before_rendering(db, client, mocker):
+    """The message comes from outside and lands in HTML."""
+    from app.api import dashboard as d
+
+    mocker.patch.object(settings, "dashboard_password", "pw")
+    request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    response = httpx.Response(400, request=request, json={})
+    await usage_service.record_error(
+        "sms_reply", anthropic.BadRequestError("<script>alert(1)</script>", response=response, body=None)
+    )
+
+    client.cookies.set(d._COOKIE, d._issue_session())
+    html = (await client.get("/health/dashboard")).text
+
+    assert "<script>alert(1)</script>" not in html
+    assert "&lt;script&gt;" in html
