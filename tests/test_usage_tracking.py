@@ -358,3 +358,103 @@ async def test_setup_cost_is_shown_but_kept_out_of_the_running_total(db, client,
 
 def _money_in(html: str, value: float) -> bool:
     return f"${value:,.2f}" in html
+
+
+# --- reconciled against the first real invoice -----------------------------
+
+def test_rates_reproduce_the_first_invoice():
+    """278 outbound segments and 45 inbound came to $3.167. A single blended
+    inbound rate cannot reproduce a per-carrier mix exactly (that invoice had
+    T-Mobile at $0.0025, one unknown at $0.004 and two Verizon at $0), so allow
+    a cent of drift — but the structure has to be right."""
+    modelled = 278 * settings.sms_cost_outbound + 45 * settings.sms_cost_inbound
+    assert modelled == pytest.approx(3.167, abs=0.01)
+
+
+def test_outbound_costs_more_than_inbound():
+    """Only outbound carries the platform fee. Symmetric rates would overstate
+    every inbound message — the invoice has no inbound platform line at all."""
+    assert settings.sms_cost_outbound > settings.sms_cost_inbound
+
+
+def test_campaign_fee_is_not_charged_monthly():
+    """The invoice lists it as 'Creation Low Volume, qty 1' beside the campaign
+    creation fee — a one-time charge, so it belongs in setup, not the monthly."""
+    assert settings.monthly_campaign_cost == 0
+    assert usage_service.fixed_monthly_cost() == pytest.approx(settings.monthly_number_cost)
+
+
+# --- prepaid credit --------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_credit_counts_messaging_only(db, mocker):
+    """The credit is Signal House's. Folding in Anthropic tokens or Resend email
+    would understate what is left, and an outage is the failure mode."""
+    mocker.patch.object(settings, "signalhouse_credit_purchased", 75.0)
+    mocker.patch.object(settings, "signalhouse_spend_before_ledger", 3.167)
+
+    await usage_service.record(db, "sms_out", actor="+1615", cost_usd=1.00)
+    await usage_service.record(db, "mms_in", actor="+1615", cost_usd=0.03)
+    await usage_service.record(db, "ai_turn", actor="+1615", cost_usd=50.00)
+    await usage_service.record(db, "email_out", actor="a@b.com", cost_usd=5.00)
+
+    c = await usage_service.credit_status(db)
+
+    assert c["tracked"] == pytest.approx(1.03)          # AI and email excluded
+    assert c["spent"] == pytest.approx(4.197)           # + pre-ledger invoice
+    assert c["remaining"] == pytest.approx(70.803)
+
+
+@pytest.mark.asyncio
+async def test_runway_is_withheld_on_too_little_history(db, mocker):
+    """A burn rate extrapolated from an hour of traffic is noise dressed as a
+    forecast."""
+    mocker.patch.object(settings, "signalhouse_credit_purchased", 75.0)
+    await usage_service.record(db, "sms_out", actor="+1615", cost_usd=1.00)
+
+    c = await usage_service.credit_status(db)
+    assert c["days_remaining"] is None
+    assert c["daily_burn"] is None
+
+
+@pytest.mark.asyncio
+async def test_runway_is_estimated_once_there_is_enough_history(db, mocker):
+    mocker.patch.object(settings, "signalhouse_credit_purchased", 75.0)
+    mocker.patch.object(settings, "signalhouse_spend_before_ledger", 0.0)
+
+    # $10 spread over 10 days = $1/day against a $65 balance ≈ 65 days.
+    db.add(UsageEvent(
+        event_type="sms_out", actor="+1615", quantity=1, cost_usd=10.0,
+        occurred_at=datetime.now(timezone.utc) - timedelta(days=10),
+    ))
+    await db.commit()
+
+    c = await usage_service.credit_status(db)
+    assert c["daily_burn"] == pytest.approx(1.0, rel=0.05)
+    assert c["days_remaining"] == pytest.approx(65, abs=2)
+
+
+@pytest.mark.asyncio
+async def test_empty_ledger_still_reports_the_full_balance(db, mocker):
+    mocker.patch.object(settings, "signalhouse_credit_purchased", 75.0)
+    mocker.patch.object(settings, "signalhouse_spend_before_ledger", 3.167)
+
+    c = await usage_service.credit_status(db)
+    assert c["remaining"] == pytest.approx(71.833)
+    assert c["days_remaining"] is None
+
+
+@pytest.mark.asyncio
+async def test_dashboard_shows_the_credit_balance(db, client, mocker):
+    from app.api import dashboard as d
+
+    mocker.patch.object(settings, "dashboard_password", "pw")
+    mocker.patch.object(settings, "signalhouse_credit_purchased", 75.0)
+    mocker.patch.object(settings, "signalhouse_spend_before_ledger", 25.17)
+
+    client.cookies.set(d._COOKIE, d._issue_session())
+    html = (await client.get("/health/dashboard")).text
+
+    assert "Signal House credit remaining" in html
+    assert "$49.83" in html
+    assert "not enough history yet" in html

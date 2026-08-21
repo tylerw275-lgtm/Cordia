@@ -94,8 +94,11 @@ class Settings(BaseSettings):
     # Carrier passthrough varies a little by network — outbound 0.0100 (AT&T,
     # Google Voice) to 0.0115 (US Cellular), inbound 0 (Verizon) to 0.0045
     # (interop) — so these are the default-carrier figures.
-    sms_cost_outbound: float = 0.0105    # per segment
-    sms_cost_inbound: float = 0.0040     # per segment
+    # Reconciled against the first invoice (278 outbound segments, 45 inbound,
+    # $3.167 — matches to the penny). This account's traffic is T-Mobile and
+    # Verizon, not the generic default carrier.
+    sms_cost_outbound: float = 0.0110    # 0.0065 platform + 0.0045 carrier
+    sms_cost_inbound: float = 0.0025     # carrier only — no platform fee inbound
     mms_cost_outbound: float = 0.03      # per message — MMS has no segments
     mms_cost_inbound: float = 0.03
     email_cost_outbound: float = 0.0004  # Resend $20/mo ÷ 50k emails
@@ -106,11 +109,21 @@ class Settings(BaseSettings):
     # Charges that accrue whether or not anyone sends a thing. Reporting only
     # per-message cost would understate the real monthly bill.
     monthly_number_cost: float = 1.00    # local number renewal
-    monthly_campaign_cost: float = 1.50  # 10DLC campaign fee (Low volume standard)
-    # One-time 10DLC setup already paid: brand registration, vetting, campaign
-    # creation, and $15 for each resubmit after a rejection. Shown separately so
-    # sunk cost never inflates a month's running total.
-    setup_cost_to_date: float = 0.0
+    # The campaign charge turned out to be one-time, not recurring: the invoice
+    # lists it as "Creation Low Volume, qty 1" beside the campaign creation fee.
+    # It lives in setup_cost_to_date instead.
+    monthly_campaign_cost: float = 0.0
+    # One-time 10DLC setup already paid, from the invoice: campaign $16.50
+    # (creation $15 + low-volume creation $1.50) + brand $4.50 + number purchase
+    # $1.00. Shown separately so sunk cost never inflates a month's total.
+    setup_cost_to_date: float = 22.00
+
+    # Signal House runs on prepaid credit. Spend-to-date is on the dashboard
+    # already; the number actually worth knowing is when a top-up is due.
+    signalhouse_credit_purchased: float = 75.00
+    # Messaging spend that predates this ledger, from the invoice. Without it
+    # the remaining balance would read high by exactly this much.
+    signalhouse_spend_before_ledger: float = 3.167
 
     # Live web research via Anthropic's server-side search/fetch tools. Costs
     # ~$0.01 per search on top of tokens, so the per-turn ceilings are config.

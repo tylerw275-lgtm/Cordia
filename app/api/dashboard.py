@@ -317,7 +317,7 @@ async def dashboard(request: Request, secret: str = "") -> HTMLResponse:
     no_consent = sorted(n for k, n in people.items() if k not in matched_keys)
 
     # ---- what it costs ---------------------------------------------------
-    usage_month = usage_all = None
+    usage_month = usage_all = credit = None
     try:
         from datetime import timedelta
 
@@ -328,6 +328,7 @@ async def dashboard(request: Request, secret: str = "") -> HTMLResponse:
             )
             usage_month = await usage_service.summary(db, since=month_start)
             usage_all = await usage_service.summary(db)
+            credit = await usage_service.credit_status(db)
     except Exception as e:
         logger.error(f"Dashboard could not read usage: {e}")
 
@@ -370,7 +371,7 @@ async def dashboard(request: Request, secret: str = "") -> HTMLResponse:
         ("web_fetch", "Pages read", "pages"),
     ]
 
-    def _usage_card(month, all_time) -> str:
+    def _usage_card(month, all_time, credit) -> str:
         if month is None:
             return ('<div class="card"><h2>What it costs</h2>'
                     '<div class="note">Could not read the usage ledger.</div></div>')
@@ -395,6 +396,28 @@ async def dashboard(request: Request, secret: str = "") -> HTMLResponse:
         )
         tokens = (f'{month["input_tokens"]:,} in / {month["output_tokens"]:,} out'
                   if month["input_tokens"] or month["output_tokens"] else "—")
+        if credit and credit["purchased"]:
+            left = credit["remaining"]
+            # Colour the number, because this is the one figure on the page that
+            # eventually requires an action.
+            colour = "#a4262c" if left < 10 else ("#8a6d0b" if left < 25 else "#1a6b3c")
+            if credit["days_remaining"] is not None:
+                runway = (f' &mdash; about {credit["days_remaining"]:,} days left at '
+                          f'{_money(credit["daily_burn"])}/day')
+            else:
+                runway = (' &mdash; not enough history yet to estimate how long '
+                          'that lasts')
+            credit_row = (
+                f'<div class="row"><span class="label">Signal House credit remaining'
+                f'{runway}</span>'
+                f'<span class="val" style="color:{colour}">{_money(left)}</span></div>'
+                f'<div class="row"><span class="label">&nbsp;&nbsp;of the '
+                f'{_money(credit["purchased"])} bought</span>'
+                f'<span class="val">{_money(credit["spent"])} used</span></div>'
+            )
+        else:
+            credit_row = ""
+
         setup = float(settings.setup_cost_to_date or 0)
         setup_row = (
             f'<div class="row"><span class="label">Spent getting set up '
@@ -407,12 +430,13 @@ async def dashboard(request: Request, secret: str = "") -> HTMLResponse:
 <span class="val" style="font-size:1.35rem">{_money(month["total_cost"])}</span></div>
 <div class="row"><span class="label">&nbsp;&nbsp;of that, messages &amp; AI</span>
 <span class="val">{_money(month["usage_cost"])}</span></div>
-<div class="row"><span class="label">&nbsp;&nbsp;of that, number &amp; campaign
+<div class="row"><span class="label">&nbsp;&nbsp;of that, number renewal
 <span style="color:#6b7280">(charged monthly either way)</span></span>
 <span class="val">{_money(month["fixed_cost"])}</span></div>
 <div class="row"><span class="label">Messages &amp; AI, all time</span>
 <span class="val">{_money(all_time["total_cost"])}</span></div>
 {setup_row}
+{credit_row}
 <div class="row"><span class="label">AI tokens this month</span>
 <span class="val">{tokens}</span></div>
 {table}
@@ -428,16 +452,18 @@ per message rather than per segment, at {_money(settings.mms_cost_outbound)} —
 about seven times a text. AI cost uses Anthropic's list prices for
 {settings.claude_model}, with cached input at a tenth of the normal rate, and web
 search is {_money(settings.web_search_cost)} per search. The number renews at
-{_money(settings.monthly_number_cost)} a month and the campaign costs
-{_money(settings.monthly_campaign_cost)}; both are charged whether or not anyone
-sends anything. Rates live in Railway (<code>SMS_COST_OUTBOUND</code>,
+{_money(settings.monthly_number_cost)} a month whether or not anyone sends
+anything; the 10DLC campaign and brand fees were one-time and sit in setup.
+Texting rates are reconciled against the first invoice and assume this account's
+carrier mix (T-Mobile and Verizon), so a message to a different network can
+differ by a few hundredths of a cent. Rates live in Railway (<code>SMS_COST_OUTBOUND</code>,
 <code>MMS_COST_OUTBOUND</code>, <code>MONTHLY_CAMPAIGN_COST</code>,
 <code>SETUP_COST_TO_DATE</code>, and so on). Each charge is stored at the rate in
 force when it happened, so changing a rate never rewrites past months, and
 nothing before this ledger existed is counted.</div>
 </div>"""
 
-    usage_section = _usage_card(usage_month, usage_all)
+    usage_section = _usage_card(usage_month, usage_all, credit)
 
     awaiting_section = "" if not awaiting else (
         '<div class="card">'

@@ -38,6 +38,9 @@ _DEFAULT_MODEL_RATE = (3.00, 15.00)
 _CACHE_READ_MULTIPLIER = 0.1
 _CACHE_WRITE_MULTIPLIER = 1.25
 
+# Below this, a burn-rate forecast is noise dressed as a number.
+_MIN_DAYS_FOR_RUNWAY = 3.0
+
 
 def model_rate(model: str | None) -> tuple[float, float]:
     model = (model or "").lower()
@@ -166,6 +169,56 @@ async def record_sms(to_or_from: str, body: str, outbound: bool, is_mms: bool = 
 def fixed_monthly_cost() -> float:
     """Charges that accrue whether or not a single message is sent."""
     return settings.monthly_number_cost + settings.monthly_campaign_cost
+
+
+# Only these come out of the Signal House balance. Anthropic tokens and Resend
+# email are different vendors on different bills — counting them here would make
+# the remaining balance wrong, and wrong in the direction that causes a surprise
+# outage.
+_MESSAGING_EVENTS = ("sms_out", "sms_in", "mms_out", "mms_in")
+
+
+async def credit_status(db: AsyncSession) -> dict:
+    """How much prepaid Signal House credit is left, and roughly how long it lasts.
+
+    Spend-to-date answers "what has this cost"; this answers the question that
+    actually needs an action — when to top up.
+    """
+    row = (await db.execute(
+        select(
+            func.coalesce(func.sum(UsageEvent.cost_usd), 0),
+            func.min(UsageEvent.occurred_at),
+        ).where(UsageEvent.event_type.in_(_MESSAGING_EVENTS))
+    )).first()
+    tracked = float(row[0] or 0)
+    first_seen = row[1]
+
+    spent = float(settings.signalhouse_spend_before_ledger or 0) + tracked
+    remaining = float(settings.signalhouse_credit_purchased or 0) - spent
+
+    # A runway extrapolated from a few hours of traffic is noise dressed as a
+    # forecast. Withhold it until there is enough history to mean anything.
+    days_of_data = 0.0
+    if first_seen is not None:
+        if first_seen.tzinfo is None:
+            first_seen = first_seen.replace(tzinfo=timezone.utc)
+        days_of_data = (datetime.now(timezone.utc) - first_seen).total_seconds() / 86400
+
+    daily_burn = days_remaining = None
+    if days_of_data >= _MIN_DAYS_FOR_RUNWAY and tracked > 0:
+        daily_burn = tracked / days_of_data
+        if daily_burn > 0:
+            days_remaining = int(remaining / daily_burn)
+
+    return {
+        "purchased": float(settings.signalhouse_credit_purchased or 0),
+        "spent": spent,
+        "remaining": remaining,
+        "tracked": tracked,
+        "daily_burn": daily_burn,
+        "days_remaining": days_remaining,
+        "days_of_data": days_of_data,
+    }
 
 
 async def record_email(address: str, outbound: bool) -> None:

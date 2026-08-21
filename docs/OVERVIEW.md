@@ -104,10 +104,14 @@ SMS program name remains "Cordia AI by AI-Gen Partners" for compliance.)
   email, AI request and web search is recorded with what it cost. The dashboard shows
   this month split into usage vs. the fixed number/campaign fees, all time, a
   per-person breakdown, and one-off 10DLC setup kept out of the running total.
-- Rates are Signal House's real account pricing (platform fee + carrier passthrough,
-  asymmetric by direction) and are configurable; the page always states the ones it
-  used. Each charge is stored at the rate in force when it happened, so changing a
-  rate never rewrites a past month.
+- Rates are reconciled against the first real Signal House invoice (platform fee +
+  carrier passthrough, asymmetric by direction — inbound carries no platform fee) and
+  are configurable; the page always states the ones it used. Each charge is stored at
+  the rate in force when it happened, so changing a rate never rewrites a past month.
+- The card also shows **prepaid Signal House credit remaining** and, once there's
+  enough history to mean anything, roughly how many days it lasts at the observed
+  burn rate. Only messaging counts against that balance — Anthropic and Resend are
+  separate bills.
 
 **Lease / document review**
 - Analyzes a lease, flags clauses by severity (standard / flag / urgent), stores a
