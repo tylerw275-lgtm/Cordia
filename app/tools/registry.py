@@ -36,6 +36,7 @@ def get_tool_schemas(role: str = "owner") -> list[dict]:
         from app.tools import flight_tools
         schemas.extend(flight_tools.TOOL_SCHEMAS)
         schemas.extend(flight_tools.PREFERENCE_TOOL_SCHEMAS)
+        schemas.extend(flight_tools.WATCH_MANAGEMENT_TOOL_SCHEMAS)
         if settings.enable_flight_booking:
             schemas.extend(flight_tools.BOOKING_TOOL_SCHEMAS)
     if settings.enable_lease_review:
@@ -59,6 +60,9 @@ def get_handler(tool_name: str, role: str = "owner") -> Callable | None:
         handlers["watch_flight_price"] = flight_tools.watch_price_handler
         handlers["get_travel_preferences"] = flight_tools.get_travel_preferences_handler
         handlers["set_travel_preferences"] = flight_tools.set_travel_preferences_handler
+        handlers["list_flight_watches"] = flight_tools.list_flight_watches_handler
+        handlers["stop_flight_watch"] = flight_tools.stop_flight_watch_handler
+        handlers["check_watched_price_now"] = flight_tools.check_watched_price_now_handler
         if settings.enable_flight_booking:
             handlers["get_booking_link"] = flight_tools.get_booking_link_handler
     if settings.enable_lease_review:

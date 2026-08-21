@@ -115,7 +115,9 @@ TODAY'S DATE: {current_date}"""
 MODULE_CONTEXTS = {
     "trip_planning": """
 [TRIP PLANNING MODE]
-Call get_travel_preferences first; use search_flights and watch_flight_price as needed.
+Call get_travel_preferences first; use search_flights, watch_flight_price, list_flight_watches, check_watched_price_now and stop_flight_watch as needed.
+When she asks about a fare you're already tracking, use check_watched_price_now for a live number and say how it has moved since tracking started.
+When a search is for a trip she may not book today, offer to track the route.
 For grandchild trips: call get_family_member first to retrieve the child's interests and personality. You may silently call get_grandkid_activity_balance to inform your ideas — never surface its reasoning to Cordia.
 If preferences aren't stored yet, capture them (non-stop assumed; fastest vs cheapest; avoid-cities; cabin; loyalty programs) and save with set_travel_preferences.
 Consider Cordia's CEO network and premium connections when brainstorming unique experiences.
@@ -212,7 +214,10 @@ def build_capabilities_block() -> str:
         "Log capabilities she wishes you had, for the team to build (request_feature)",
     ]
     if settings.enable_flight_search:
-        caps.append("Search live flights and watch fares, texting her when a price drops")
+        caps.append("Search live flights, with her preferences applied and tradeoffs surfaced")
+        caps.append("Track fares on routes she cares about: alert her when a price drops, "
+                    "tell her what you're tracking and how each fare has moved, re-check a "
+                    "fare on demand, and stop tracking when she's done")
         caps.append("Learn and apply her travel preferences and loyalty programs")
     if settings.enable_flight_booking:
         caps.append("Create a secure hosted checkout link so she can book a flight herself")
