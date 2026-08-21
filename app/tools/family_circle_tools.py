@@ -264,9 +264,10 @@ async def request_family_input_handler(db: AsyncSession, **kw) -> dict:
 async def ask_family_member_handler(db: AsyncSession, **kw) -> dict:
     """Send Cordia's question to a consented circle member, for real.
 
-    Guarded three ways: the person must already be in the family circle, must
-    have a live consent record, and the message is only ever the question Cord
-    composed — never stored contact data.
+    Reports every piece of state it checked, so a refusal can never be
+    described back to Cordia as the wrong problem: consent (the legal gate)
+    and circle access (an app permission she controls) are different things
+    with different fixes.
     """
     from sqlalchemy import text as sql_text
     from app.services import sms_service
@@ -276,28 +277,45 @@ async def ask_family_member_handler(db: AsyncSession, **kw) -> dict:
     if not member:
         return {"sent": False, "reason": "unknown_person",
                 "message": f"No family member on file named {kw['name']}."}
-    if not member.has_circle_access:
-        return {"sent": False, "reason": "not_in_circle",
-                "message": (f"{member.name} hasn't been given circle access yet. Offer to set "
-                            "that up with grant_family_circle_access first.")}
     if not member.phone:
-        return {"sent": False, "reason": "no_number",
-                "message": f"No mobile number on file for {member.name} — ask Cordia for it."}
+        return {"sent": False, "reason": "no_number_on_file",
+                "consent_on_file": None, "circle_access": member.has_circle_access,
+                "message": (f"There's no mobile number on file for {member.name}, so nothing "
+                            "was sent. Ask Cordia for it. Do NOT say they haven't consented — "
+                            "that isn't what's missing.")}
 
     digits = normalize_phone(member.phone)
-    result = await db.execute(
+    row = (await db.execute(
         sql_text(
-            "SELECT 1 FROM sms_consent "
+            "SELECT opted_out_at IS NOT NULL AS opted_out FROM sms_consent "
             "WHERE right(regexp_replace(phone, '[^0-9]', '', 'g'), 10) = :digits "
-            "AND consented_at IS NOT NULL AND opted_out_at IS NULL"
+            "AND consented_at IS NOT NULL"
         ),
         {"digits": digits},
-    )
-    if result.first() is None:
+    )).first()
+    consented = row is not None and not row.opted_out
+    opted_out = row is not None and row.opted_out
+
+    if opted_out:
+        return {"sent": False, "reason": "opted_out",
+                "consent_on_file": True, "circle_access": member.has_circle_access,
+                "message": (f"{member.name} texted STOP, so they cannot be messaged. Only they "
+                            "can undo that by texting START. Tell Cordia plainly.")}
+    if not consented:
         return {"sent": False, "reason": "no_consent",
-                "message": (f"{member.name} hasn't consented to texts, so nothing was sent. "
-                            "Tell Cordia, and offer to email them or give her a note to "
-                            "forward herself.")}
+                "consent_on_file": False, "circle_access": member.has_circle_access,
+                "message": (f"{member.name} has not consented to texts, so nothing was sent. "
+                            "Offer to give Cordia the consent link to forward from her own "
+                            "phone, or to email them instead.")}
+    if not member.has_circle_access:
+        # They CAN legally be texted; they just aren't set up to contribute yet,
+        # which also means their reply would not reach Cord.
+        return {"sent": False, "reason": "needs_circle_access",
+                "consent_on_file": True, "circle_access": False,
+                "message": (f"{member.name} HAS consented — the only thing missing is circle "
+                            "access, which Cordia controls. Say exactly that (do not say they "
+                            "haven't consented), call grant_family_circle_access for them, then "
+                            "call ask_family_member again to actually send the question.")}
 
     about = None
     if kw.get("about_name"):
@@ -308,11 +326,12 @@ async def ask_family_member_handler(db: AsyncSession, **kw) -> dict:
 
     delivered = await sms_service.send_sms(to=member.phone, body=kw["question"])
     if not delivered:
-        return {"sent": False, "reason": "suppressed",
+        return {"sent": False, "reason": "suppressed_at_send",
+                "consent_on_file": True, "circle_access": True,
                 "message": f"The message to {member.name} was not delivered — tell Cordia."}
     return {
-        "sent": True,
-        "to": member.name,
+        "sent": True, "to": member.name,
+        "consent_on_file": True, "circle_access": True,
         "message": (f"Sent to {member.name}. Tell Cordia it's on its way and that you'll pass "
                     "along the reply when it comes in."),
     }

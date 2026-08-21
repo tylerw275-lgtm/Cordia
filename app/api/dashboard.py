@@ -194,7 +194,7 @@ async def dashboard(request: Request, secret: str = "") -> HTMLResponse:
     from sqlalchemy import text as sa_text
 
     # ---- consent picture -------------------------------------------------
-    consent_rows, people = [], {}
+    consent_rows, people, circle_access = [], {}, {}
     db_error = None
     try:
         async with get_db_session() as db:
@@ -207,6 +207,7 @@ async def dashboard(request: Request, secret: str = "") -> HTMLResponse:
             )).scalars():
                 if (k := normalize_phone(m.phone)):
                     people[k] = m.name
+                    circle_access[k] = bool(m.has_circle_access)
             for c in (await db.execute(
                 select(Contact).where(Contact.phone.isnot(None))
             )).scalars():
@@ -225,7 +226,11 @@ async def dashboard(request: Request, secret: str = "") -> HTMLResponse:
         when = consented_at.strftime("%b %-d, %Y") if consented_at else "—"
         how = {"web_form": "Signed the form", "keyword_start": "Texted START",
                "inbound_text": "Texted in"}.get(method, method or "—")
-        entry = (name or "<em>unknown</em>", _format_phone(phone), how, when)
+        can_reply = (
+            '<span class="pill ok">yes</span>' if circle_access.get(key)
+            else '<span class="pill warn">needs access</span>'
+        )
+        entry = (name or "<em>unknown</em>", _format_phone(phone), how, when, can_reply)
         if opted_out_at:
             opted_out.append(entry)
         elif name:
@@ -267,15 +272,19 @@ async def dashboard(request: Request, secret: str = "") -> HTMLResponse:
 
 <div class="card">
 <h2>Who Cord can text</h2>
-{_table(can_text, ["Name", "Number", "How they consented", "Date"],
+{_table(can_text, ["Name", "Number", "How they consented", "Date", "Replies reach Cord"],
         "Nobody has consented yet.")}
+<div class="note"><strong>Replies reach Cord?</strong> Consent lets Cord text them.
+Circle access lets their <em>answer</em> come back. Anyone marked
+<span class="pill warn">needs access</span> can be texted, but Cord would not
+see what they send back — ask Cord to give them circle access.</div>
 {f'<div class="note"><strong>Consented, but not matched to anyone.</strong> '
  f'Someone signed the consent form with a number that is not on any profile. '
  f'Call or text it to find out who it is, then either add that number to their '
  f'profile (so Cord can text them) or ignore it if it was a test.'
- f'{_table(unmatched, ["Name", "Number", "How", "Date"], "")}</div>' if unmatched else ''}
+ f'{_table(unmatched, ["Name", "Number", "How", "Date", ""], "")}</div>' if unmatched else ''}
 {f'<div class="note"><strong>Opted out.</strong> Cord will never text these numbers.'
- f'{_table(opted_out, ["Name", "Number", "How", "Date"], "")}</div>' if opted_out else ''}
+ f'{_table(opted_out, ["Name", "Number", "How", "Date", ""], "")}</div>' if opted_out else ''}
 </div>
 
 <div class="card">
