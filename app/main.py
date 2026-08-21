@@ -5,7 +5,7 @@ import structlog
 from fastapi import Depends, FastAPI
 from sqlalchemy import text as sa_text
 
-from app.api import compliance, conversations, duffel_webhooks, email, family, real_estate, sms, trips
+from app.api import compliance, conversations, dashboard, duffel_webhooks, email, family, real_estate, sms, trips
 from app.api.deps import require_admin
 from app.config import settings
 from app.middleware.logging import CorrelationIdMiddleware
@@ -110,6 +110,7 @@ app.add_middleware(CorrelationIdMiddleware)
 app.include_router(sms.router)
 app.include_router(email.router)
 app.include_router(compliance.router)
+app.include_router(dashboard.router, prefix="/health")
 _admin = [Depends(require_admin)]
 # These expose family PII, the full text of Cordia's conversations, and accept
 # writes (create/patch/delete). Everything below is admin-only.
