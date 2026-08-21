@@ -3,13 +3,22 @@
 The JSON health endpoints are fine for scripts and terrible to read in a
 browser. This renders the same information as a page you can scan in a few
 seconds: what is working, what is not, and what to do about it.
+
+Phone numbers appear in full here, deliberately. This page is admin-gated and
+exists so the operator can audit the consent record — a masked number cannot
+be traced back to a person, which defeats the purpose. The masking that matters
+is in the *tool results*, which reach the model: Cord still never sees a stored
+number, so it cannot repeat one into a text or an email.
 """
+import base64
+import hashlib
+import hmac
 import logging
+import time
 
-from fastapi import APIRouter, Depends
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Form, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 
-from app.api.deps import require_admin
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -49,6 +58,119 @@ code{background:#f0f1f3;padding:1px 5px;border-radius:4px;font-size:.85em}
 """
 
 
+_COOKIE = "cord_admin"
+
+
+def _signing_key() -> bytes:
+    """Derived from the password itself, so changing the password invalidates
+    every existing session without needing a second secret."""
+    return hashlib.sha256(
+        (settings.dashboard_password + "|cord-dashboard-session").encode()
+    ).digest()
+
+
+def _issue_session() -> str:
+    expires = str(int(time.time()) + settings.dashboard_session_hours * 3600)
+    sig = hmac.new(_signing_key(), expires.encode(), hashlib.sha256).hexdigest()
+    return f"{expires}.{sig}"
+
+
+def _session_valid(token: str | None) -> bool:
+    if not token or not settings.dashboard_password:
+        return False
+    expires, _, sig = token.partition(".")
+    if not expires.isdigit() or not sig:
+        return False
+    expected = hmac.new(_signing_key(), expires.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(sig, expected):
+        return False
+    return int(expires) > time.time()
+
+
+def _authorized(request: Request) -> bool:
+    """A valid session cookie, or the admin secret for scripted access."""
+    if _session_valid(request.cookies.get(_COOKIE)):
+        return True
+    supplied = request.query_params.get("secret") or request.headers.get("X-Admin-Secret") or ""
+    return bool(settings.admin_api_secret) and hmac.compare_digest(
+        supplied.encode(), settings.admin_api_secret.encode()
+    )
+
+
+_LOGIN_PAGE = """<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cord — Sign in</title><style>{style}
+.login{{max-width:360px;margin:12vh auto;padding:0 16px}}
+.login .card{{padding:28px}}
+input[type=password]{{width:100%;padding:11px;border:1px solid #cbd0d6;border-radius:6px;
+font-size:1rem;margin-top:6px}}
+button{{width:100%;margin-top:16px;padding:11px;background:#1a6b3c;color:#fff;border:none;
+border-radius:6px;font-size:1rem;font-weight:600;cursor:pointer}}
+button:hover{{background:#155830}}
+.err{{background:#fdeaea;color:#a4262c;padding:10px 12px;border-radius:6px;
+font-size:.9rem;margin-bottom:14px}}
+</style></head><body><div class="login"><div class="card">
+<h1 style="font-size:1.25rem;margin:0 0 6px">Cord</h1>
+<div class="sub" style="margin-bottom:20px">Status dashboard</div>
+{error}
+<form method="post" action="/health/login">
+<label style="font-size:.9rem;color:#4b5563">Password
+<input type="password" name="password" autofocus required autocomplete="current-password">
+</label>
+<button type="submit">Sign in</button>
+</form>
+</div></div></body></html>"""
+
+
+@router.get("/login", include_in_schema=False)
+async def login_page() -> HTMLResponse:
+    return HTMLResponse(_LOGIN_PAGE.format(style=_STYLE, error=""))
+
+
+@router.post("/login", include_in_schema=False)
+async def login(password: str = Form(...)):
+    if not settings.dashboard_password:
+        logger.error("Dashboard login attempted but DASHBOARD_PASSWORD is not set")
+        return HTMLResponse(_LOGIN_PAGE.format(
+            style=_STYLE,
+            error='<div class="err">No dashboard password is configured on the server.</div>',
+        ), status_code=503)
+
+    if not hmac.compare_digest(password.encode(), settings.dashboard_password.encode()):
+        logger.warning("Failed dashboard login attempt")
+        # Slow brute force without holding the worker for long.
+        import asyncio
+        await asyncio.sleep(1.0)
+        return HTMLResponse(_LOGIN_PAGE.format(
+            style=_STYLE, error='<div class="err">Incorrect password.</div>',
+        ), status_code=401)
+
+    response = RedirectResponse(url="/health/dashboard", status_code=303)
+    response.set_cookie(
+        _COOKIE, _issue_session(),
+        max_age=settings.dashboard_session_hours * 3600,
+        httponly=True, secure=True, samesite="strict", path="/health",
+    )
+    return response
+
+
+@router.get("/logout", include_in_schema=False)
+async def logout():
+    response = RedirectResponse(url="/health/login", status_code=303)
+    response.delete_cookie(_COOKIE, path="/health")
+    return response
+
+
+def _format_phone(raw: str) -> str:
+    """(615) 853-9483 — readable, and dialable straight from a phone."""
+    d = "".join(c for c in (raw or "") if c.isdigit())
+    if len(d) == 11 and d.startswith("1"):
+        d = d[1:]
+    if len(d) == 10:
+        return f"({d[:3]}) {d[3:6]}-{d[6:]}"
+    return raw or "—"
+
+
 def _pill(ok: bool, yes: str = "Working", no: str = "Not set") -> str:
     return f'<span class="pill {"ok" if ok else "bad"}">{yes if ok else no}</span>'
 
@@ -57,8 +179,10 @@ def _row(label: str, value: str) -> str:
     return f'<div class="row"><span class="label">{label}</span><span class="val">{value}</span></div>'
 
 
-@router.get("/dashboard", include_in_schema=False, dependencies=[Depends(require_admin)])
-async def dashboard(secret: str = "") -> HTMLResponse:
+@router.get("/dashboard", include_in_schema=False)
+async def dashboard(request: Request, secret: str = "") -> HTMLResponse:
+    if not _authorized(request):
+        return HTMLResponse(_LOGIN_PAGE.format(style=_STYLE, error=""), status_code=401)
     from datetime import datetime, timezone
 
     from sqlalchemy import select
@@ -101,7 +225,7 @@ async def dashboard(secret: str = "") -> HTMLResponse:
         when = consented_at.strftime("%b %-d, %Y") if consented_at else "—"
         how = {"web_form": "Signed the form", "keyword_start": "Texted START",
                "inbound_text": "Texted in"}.get(method, method or "—")
-        entry = (name, f"...{normalize_phone(phone)[-4:]}", how, when)
+        entry = (name or "<em>unknown</em>", _format_phone(phone), how, when)
         if opted_out_at:
             opted_out.append(entry)
         elif name:
@@ -146,9 +270,9 @@ async def dashboard(secret: str = "") -> HTMLResponse:
 {_table(can_text, ["Name", "Number", "How they consented", "Date"],
         "Nobody has consented yet.")}
 {f'<div class="note"><strong>Consented, but not matched to anyone.</strong> '
- f'These numbers signed the form, but no one on file has that number — '
- f'likely they signed with a different phone than the one on their profile. '
- f'Update the profile number to match and they will appear above.'
+ f'Someone signed the consent form with a number that is not on any profile. '
+ f'Call or text it to find out who it is, then either add that number to their '
+ f'profile (so Cord can text them) or ignore it if it was a test.'
  f'{_table(unmatched, ["Name", "Number", "How", "Date"], "")}</div>' if unmatched else ''}
 {f'<div class="note"><strong>Opted out.</strong> Cord will never text these numbers.'
  f'{_table(opted_out, ["Name", "Number", "How", "Date"], "")}</div>' if opted_out else ''}
@@ -207,6 +331,7 @@ async def dashboard(secret: str = "") -> HTMLResponse:
 <a href="/health/test-email{q}">Send a test email</a>
 <a href="/health/test-flights{q}">Search live flights</a>
 <a class="secondary" href="/health/config{q}">Raw configuration</a>
+<a class="secondary" href="/health/logout">Sign out</a>
 </div>
 </div>
 

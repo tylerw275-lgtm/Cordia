@@ -73,6 +73,11 @@ class Settings(BaseSettings):
     # with the SMS vendor. Unset means those routes are denied, not open.
     admin_api_secret: str = ""
 
+    # Password for the human status page at /health/dashboard. Unset means the
+    # page cannot be logged into at all — it fails closed like the admin API.
+    dashboard_password: str = ""
+    dashboard_session_hours: int = 12
+
     # Fernet key encrypting loyalty account numbers at rest. Generate with:
     #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     # Unset means loyalty numbers cannot be stored at all (fails closed).
