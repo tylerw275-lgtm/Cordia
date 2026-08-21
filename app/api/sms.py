@@ -196,11 +196,14 @@ _STILL_WORKING_NOTES = (
 # what arrives next either way.
 _NOTE_SCHEDULE = (4.0, 30.0, 45.0)
 
-# The last note sent to each number, so the same phrasing never lands twice in a
-# row. Random choice repeats often enough to notice, and a visible repeat is the
-# exact thing this is meant to remove. Bounded like _RECENT_MESSAGE_IDS.
-_LAST_NOTE: "OrderedDict[str, str]" = OrderedDict()
-_LAST_NOTE_MAX = 200
+# The last few notes sent to each number. Tracking only the single most recent
+# one was not enough: across two turns of the same task Cordia saw
+# "Still working on this - almost there." twice, because the opening note of the
+# second turn had already displaced the follow-up it needed to avoid. A short
+# history covers the whole exchange, not just the last message.
+_RECENT_NOTES: "OrderedDict[str, list[str]]" = OrderedDict()
+_RECENT_NOTES_MAX = 200
+_NOTE_MEMORY = 3
 
 
 def _working_note(to: str, body: str = "", followup: bool = False) -> str:
@@ -211,14 +214,14 @@ def _working_note(to: str, body: str = "", followup: bool = False) -> str:
         pool = _STILL_WORKING_NOTES
     else:
         pool = _RESEARCH_NOTES if is_deep_work(body or "") else _WORKING_NOTES
-    previous = _LAST_NOTE.get(to)
-    choices = [n for n in pool if n != previous] or list(pool)
+    recent = _RECENT_NOTES.get(to, [])
+    choices = [n for n in pool if n not in recent] or list(pool)
     note = random.choice(choices)
 
-    _LAST_NOTE[to] = note
-    _LAST_NOTE.move_to_end(to)
-    while len(_LAST_NOTE) > _LAST_NOTE_MAX:
-        _LAST_NOTE.popitem(last=False)
+    _RECENT_NOTES[to] = (recent + [note])[-_NOTE_MEMORY:]
+    _RECENT_NOTES.move_to_end(to)
+    while len(_RECENT_NOTES) > _RECENT_NOTES_MAX:
+        _RECENT_NOTES.popitem(last=False)
     return note
 
 

@@ -63,11 +63,11 @@ def test_two_people_do_not_constrain_each_other():
     assert len(seen) >= 3
 
 
-def test_the_last_note_table_stays_bounded():
+def test_the_note_table_stays_bounded():
     """It is keyed by phone number and lives for the process's lifetime."""
-    for i in range(sms._LAST_NOTE_MAX + 50):
+    for i in range(sms._RECENT_NOTES_MAX + 50):
         sms._working_note(f"+1615555{i:04d}", "hey")
-    assert len(sms._LAST_NOTE) <= sms._LAST_NOTE_MAX
+    assert len(sms._RECENT_NOTES) <= sms._RECENT_NOTES_MAX
 
 
 # --- matched to the ask -----------------------------------------------------
@@ -148,3 +148,23 @@ async def test_a_failed_note_does_not_kill_the_pending_reply(mocker):
     await sms._notify_if_slow("+16155555555", "hey")
 
     assert send.await_count == 2, "a failed note stopped the later ones"
+
+
+def test_a_note_does_not_repeat_across_turns_of_the_same_task():
+    """What Cordia actually saw: "Still working on this - almost there." twice
+    while one deliverable was being built, because the opening note of the
+    second turn had displaced the follow-up it needed to avoid."""
+    sms._RECENT_NOTES.clear()
+    seen = []
+    for _ in range(2):                       # research turn, then deliverable turn
+        seen.append(sms._working_note("+16157080002", "pack for naples"))
+        seen.append(sms._working_note("+16157080002", "pack for naples", followup=True))
+
+    assert len(seen) == len(set(seen)), f"a note repeated across turns: {seen}"
+
+
+def test_the_note_history_stays_bounded_per_person():
+    sms._RECENT_NOTES.clear()
+    for _ in range(20):
+        sms._working_note("+16155550123", "hey")
+    assert len(sms._RECENT_NOTES["+16155550123"]) <= sms._NOTE_MEMORY
