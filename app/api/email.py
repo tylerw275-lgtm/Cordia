@@ -44,6 +44,15 @@ async def receive_email(request: Request, db: AsyncSession = Depends(get_db)) ->
         return Response(status_code=403)
 
     payload = await _parse_inbound(request)
+
+    # Resend posts every event type to the same endpoint — email.sent,
+    # email.delivered, email.bounced, email.received. Only the last one is a
+    # message TO Cord; treating a delivery receipt as inbound mail would feed
+    # our own outgoing subject line back into a model turn.
+    event_type = str(payload.get("type") or "")
+    if event_type and event_type != "email.received":
+        return Response(status_code=200)
+
     sender = email_inbound.extract_email(payload.get("from") or payload.get("sender") or payload.get("From"))
     subject = _first(payload, "subject", "Subject")
     body = _first(payload, "text", "plain", "body-plain", "stripped-text", "TextBody", "body")
