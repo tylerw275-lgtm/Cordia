@@ -142,6 +142,18 @@ async def receive_email(request: Request, db: AsyncSession = Depends(get_db)) ->
             # 500, not 200: this message is real and retryable. Acknowledging it
             # would discard someone's email permanently.
             logger.error(f"Inbound email {email_id} metadata arrived but content did not: {e}")
+            # The last step in this path that reported nothing. Resend's retries
+            # exhaust, outbound keeps working, and the symptom is identical to
+            # every other inbound failure — so it goes through the same reporting
+            # as everything else, carrying the status and the URL attempted.
+            try:
+                from app.services import usage_service
+                await usage_service.record_error(
+                    "email_inbound_fetch", e, actor=sender or email_id,
+                    message=f"subject: {subject}" if subject else None,
+                )
+            except Exception as report_error:    # pragma: no cover - defensive
+                logger.error(f"Could not report a failed content fetch: {report_error}")
             return JSONResponse(status_code=500, content={"status": "content_fetch_failed"})
         # Cap the fetched body: an inbound message is attacker-influenced input
         # and this is the one path where its full length reaches a model turn.

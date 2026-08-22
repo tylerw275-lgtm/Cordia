@@ -163,6 +163,12 @@ class ReceivedEmailUnavailable(RuntimeError):
     the bug this fetch exists to fix.
     """
 
+    # Its message is the provider's status line plus the URL we called, both
+    # built here. No part of it can come from the inbound message, so it is
+    # safe to keep in a stored error row and in the alert — where the status
+    # and the address are the entire diagnostic value.
+    detail_is_safe = True
+
 
 async def fetch_received_email(email_id: str) -> dict:
     """Fetch one inbound message's content from Resend.
@@ -174,14 +180,18 @@ async def fetch_received_email(email_id: str) -> dict:
     """
     if not settings.email_api_key:
         raise ReceivedEmailUnavailable("EMAIL_API_KEY is not set")
+    url = settings.email_received_url_template.format(email_id=email_id)
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(
-                f"https://api.resend.com/emails/receiving/{email_id}",
-                headers={"Authorization": f"Bearer {settings.email_api_key}"},
+                url, headers={"Authorization": f"Bearer {settings.email_api_key}"},
             )
             resp.raise_for_status()
             return resp.json()
     except Exception as e:
-        logger.error(f"Could not fetch received email {email_id}: {e}")
-        raise ReceivedEmailUnavailable(str(e)) from e
+        # The URL goes in the message on purpose. httpx already names the status
+        # and the address it called, and this failure reaches a human only as an
+        # alert — "404 for https://api.resend.com/emails/receiving/..." diagnoses
+        # itself, where "could not fetch" starts another investigation.
+        logger.error(f"Could not fetch received email {email_id} from {url}: {e}")
+        raise ReceivedEmailUnavailable(f"{e} (GET {url})") from e

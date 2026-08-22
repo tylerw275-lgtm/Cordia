@@ -66,6 +66,13 @@ class Settings(BaseSettings):
     # Resend's webhook signing secret (whsec_...). Preferred over the URL
     # secret: it proves the request came from Resend and was not altered.
     email_webhook_signing_secret: str = ""
+    # Where an inbound message's body is fetched from. Resend's email.received
+    # carries metadata only, so this call is the difference between a reply and
+    # silence. It is config rather than a constant because if the path is ever
+    # wrong the symptom is indistinguishable from every other inbound failure —
+    # the webhook 500s, Resend retries and gives up — and correcting it should
+    # be a variable, not a deploy.
+    email_received_url_template: str = "https://api.resend.com/emails/receiving/{email_id}"
     owner_email: str = ""  # Cordia's destination inbox
 
     # Where the people who run the service hear about it. Distinct from

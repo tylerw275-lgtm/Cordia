@@ -241,6 +241,15 @@ def _safe_detail(exc: BaseException) -> str | None:
     library, never for a generic exception whose message could be anything. The
     module the exception class came from is the test.
     """
+    # An exception of ours can opt in when its message is built from provider
+    # text and our own strings and can never quote the user — the same opt-in
+    # shape as the tool dispatcher, and for the same reason: defaulting to
+    # "include it" is how something private leaks, defaulting to "drop it" is
+    # how an alert arrives with the one detail it existed to carry removed.
+    if getattr(exc, "detail_is_safe", False):
+        text = str(exc).strip()
+        return text[:400] if text else None
+
     module = (type(exc).__module__ or "").split(".")[0]
     if module not in _PROVIDER_ERROR_MODULES:
         return None

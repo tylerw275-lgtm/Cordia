@@ -499,3 +499,114 @@ async def test_a_broken_alert_does_not_change_the_403(client, mocker):
 
     response = await client.post("/webhook/email", json={"type": "email.received"})
     assert response.status_code == 403
+
+
+# --- the body fetch, which is the difference between a reply and silence ----
+
+@pytest.mark.asyncio
+async def test_a_failed_body_fetch_alerts_with_the_status_and_url(sent, mocker):
+    """Resend's email.received carries metadata only, so this call IS the
+    reply. When it fails the webhook 500s, Resend retries and gives up, and the
+    symptom is identical to every other inbound failure."""
+    mocker.patch("app.services.usage_service.record_standalone", new=mocker.AsyncMock())
+    from app.services.email_service import ReceivedEmailUnavailable
+
+    await usage_service.record_error(
+        "email_inbound_fetch",
+        ReceivedEmailUnavailable(
+            "Client error '404 Not Found' "
+            "(GET https://api.resend.com/emails/receiving/re_abc)"),
+    )
+
+    body = _body(sent.await_args)
+    assert "404" in body, "the alert does not say what the provider answered"
+    assert "api.resend.com/emails/receiving" in body, "the alert does not say what it called"
+
+
+def test_that_detail_survives_the_safety_filter():
+    """It nearly did not. _safe_detail drops the message of any exception from
+    app.*, so the one fact the alert exists to carry was being removed — while
+    the alert still looked correct."""
+    from app.services.email_service import ReceivedEmailUnavailable
+    from app.services.usage_service import _safe_detail
+
+    detail = _safe_detail(ReceivedEmailUnavailable("404 (GET https://api.resend.com/x)"))
+    assert detail and "api.resend.com" in detail
+
+
+def test_an_ordinary_exception_still_has_its_message_dropped():
+    """The opt-in must not become a general amnesty: a plain exception can
+    quote her message straight back, and error rows render on a web page."""
+    from app.services.usage_service import _safe_detail
+
+    assert _safe_detail(ValueError("what should I pack for the naples house")) is None
+    assert _safe_detail(KeyError("tyler@example.com")) is None
+
+
+@pytest.mark.asyncio
+async def test_a_failed_fetch_answers_500_so_the_message_is_not_lost(client, mocker, sent):
+    """200 would tell Resend the mail was handled and it would never retry —
+    discarding someone's email permanently."""
+    mocker.patch.object(settings, "email_webhook_signing_secret", "")
+    mocker.patch.object(settings, "email_inbound_secret", "shhh")
+    mocker.patch("app.services.email_service.fetch_received_email",
+                 new=mocker.AsyncMock(side_effect=__import__(
+                     "app.services.email_service", fromlist=["x"]
+                 ).ReceivedEmailUnavailable("404 (GET https://api.resend.com/x)")))
+    mocker.patch("app.services.usage_service.record_standalone", new=mocker.AsyncMock())
+
+    response = await client.post(
+        "/webhook/email?secret=shhh",
+        json={"type": "email.received", "email_id": "re_abc",
+              "from": "cordia@example.com", "subject": "Re: flights"},
+    )
+
+    assert response.status_code == 500
+    assert response.json()["status"] == "content_fetch_failed"
+
+
+@pytest.mark.asyncio
+async def test_a_broken_alert_does_not_change_that_500(client, mocker):
+    mocker.patch.object(settings, "email_webhook_signing_secret", "")
+    mocker.patch.object(settings, "email_inbound_secret", "shhh")
+    mocker.patch("app.services.email_service.fetch_received_email",
+                 new=mocker.AsyncMock(side_effect=__import__(
+                     "app.services.email_service", fromlist=["x"]
+                 ).ReceivedEmailUnavailable("boom")))
+    mocker.patch("app.services.usage_service.record_standalone",
+                 new=mocker.AsyncMock(side_effect=RuntimeError("ledger down")))
+
+    response = await client.post(
+        "/webhook/email?secret=shhh",
+        json={"type": "email.received", "email_id": "re_abc", "from": "c@example.com"},
+    )
+    assert response.status_code == 500
+
+
+@pytest.mark.asyncio
+async def test_the_fetch_url_is_config_not_a_constant(mocker):
+    """If the endpoint is ever wrong, correcting it should be a Railway
+    variable rather than a deploy."""
+    from app.services import email_service
+
+    mocker.patch.object(settings, "email_api_key", "re_key")
+    mocker.patch.object(settings, "email_received_url_template",
+                        "https://example.test/inbound/{email_id}")
+
+    called = {}
+
+    class _Resp:
+        def raise_for_status(self): pass
+        def json(self): return {"text": "hello"}
+
+    class _Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def get(self, url, headers=None):
+            called["url"] = url
+            return _Resp()
+
+    mocker.patch.object(email_service.httpx, "AsyncClient", lambda **kw: _Client())
+
+    await email_service.fetch_received_email("re_abc")
+    assert called["url"] == "https://example.test/inbound/re_abc"
