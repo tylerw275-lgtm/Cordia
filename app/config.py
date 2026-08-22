@@ -196,6 +196,11 @@ class Settings(BaseSettings):
     # it in the turn that produced it; replaying 30k characters of search JSON
     # is what evicted everything else.
     history_max_tool_result_chars: int = 3_000
+    # One inbound email used to be allowed 50,000 characters - larger than the
+    # whole history window, so a single forwarded thread could evict a
+    # conversation. Markdown conversion and quote stripping remove most of the
+    # bulk; this bounds what is left.
+    inbound_email_max_chars: int = 12_000
 
     # Keeping track of what a group still has to do before a trip. Anything
     # outstanding surfaces in the morning brief, which goes to Cordia and to

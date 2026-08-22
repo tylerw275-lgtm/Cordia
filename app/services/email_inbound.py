@@ -29,6 +29,33 @@ def extract_email(value) -> str:
     return normalize_email(value)
 
 
+def readable_body(text: str | None, html: str | None) -> str:
+    """The message as markdown, bounded.
+
+    Prefers the HTML part when there is one, because that is where the structure
+    lives — a deliverable sent as headings and lists arrives as a flat wall in
+    the plain-text alternative. Quote stripping happens later, in
+    process_inbound_email, so this stays usable for the capture path too.
+    """
+    rendered = html_to_markdown(html) if html else (text or "")
+    if not rendered.strip() and text:
+        rendered = text
+    cap = settings.inbound_email_max_chars
+    if len(rendered) <= cap:
+        return rendered
+    # Marked, not silent: the model should know it is reading a fragment rather
+    # than assume the message simply ended there.
+    return rendered[:cap] + f"\n\n...[{len(rendered) - cap} more characters not shown]"
+
+
+def describe_message(sender: str, subject: str, body: str) -> str:
+    """A short header so a turn read back months later explains itself."""
+    header = f"[email from {sender}"
+    if subject:
+        header += f" - subject: {subject}"
+    return header + f"]\n\n{body}"
+
+
 def strip_quoted(body: str) -> str:
     """Drop quoted reply history so the model only sees the new message."""
     lines = body.split("\n")
@@ -43,31 +70,66 @@ def strip_quoted(body: str) -> str:
     return "\n".join(kept).strip() or body.strip()
 
 
-_BLOCK_END_RE = re.compile(r"</(?:p|div|br|tr|h[1-6]|li)\s*>|<br\s*/?>", re.IGNORECASE)
+_DROP_RE = re.compile(r"<(script|style|head)\b.*?</\1>", re.IGNORECASE | re.DOTALL)
 _TAG_RE = re.compile(r"<[^>]+>")
-_DROP_RE = re.compile(r"<(script|style)\b.*?</\1>", re.IGNORECASE | re.DOTALL)
+_BLANKS_RE = re.compile(r"\n{3,}")
+
+# Structure worth keeping, in the order it has to be applied. An inbound
+# deliverable arrives as headings, lists and links; flattening it to bare lines
+# throws all of that away and leaves an undifferentiated block that is harder to
+# read and no cheaper.
+_MARKDOWN_RULES = (
+    (re.compile(r"<h1[^>]*>(.*?)</h1>", re.IGNORECASE | re.DOTALL), r"\n# \1\n"),
+    (re.compile(r"<h2[^>]*>(.*?)</h2>", re.IGNORECASE | re.DOTALL), r"\n## \1\n"),
+    (re.compile(r"<h3[^>]*>(.*?)</h3>", re.IGNORECASE | re.DOTALL), r"\n### \1\n"),
+    (re.compile(r"<h[456][^>]*>(.*?)</h[456]>", re.IGNORECASE | re.DOTALL), r"\n#### \1\n"),
+    (re.compile(r"<(?:strong|b)[^>]*>(.*?)</(?:strong|b)>", re.IGNORECASE | re.DOTALL), r"**\1**"),
+    (re.compile(r"<(?:em|i)[^>]*>(.*?)</(?:em|i)>", re.IGNORECASE | re.DOTALL), r"*\1*"),
+    (re.compile(r'<a[^>]*href=["\'](.*?)["\'][^>]*>(.*?)</a>', re.IGNORECASE | re.DOTALL), r"[\2](\1)"),
+    (re.compile(r"<li[^>]*>(.*?)</li>", re.IGNORECASE | re.DOTALL), r"\n- \1"),
+    (re.compile(r"<blockquote[^>]*>(.*?)</blockquote>", re.IGNORECASE | re.DOTALL), r"\n> \1\n"),
+    (re.compile(r"<hr\s*/?>", re.IGNORECASE), "\n---\n"),
+    (re.compile(r"<br\s*/?>", re.IGNORECASE), "\n"),
+    # A paragraph is a real break; a div usually is not. Gmail wraps every
+    # single line in its own div, so treating those as paragraphs double-spaces
+    # an entire message.
+    (re.compile(r"</p\s*>", re.IGNORECASE), "\n\n"),
+    (re.compile(r"</(?:div|tr|ul|ol|table)\s*>", re.IGNORECASE), "\n"),
+)
+
+_ENTITIES = (
+    ("&nbsp;", " "), ("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"),
+    ("&quot;", '"'), ("&#39;", "'"), ("&apos;", "'"), ("&mdash;", "-"),
+    ("&ndash;", "-"), ("&hellip;", "..."), ("&rsquo;", "'"), ("&lsquo;", "'"),
+    ("&ldquo;", '"'), ("&rdquo;", '"'),
+)
 
 
-def html_to_text(html: str) -> str:
-    """Crude HTML -> text, for inbound mail that carries no plain-text part.
+def html_to_markdown(html: str) -> str:
+    """HTML mail as markdown, keeping the shape the sender gave it.
 
-    Deliberately dependency-free: the result is read by a language model, not
-    rendered, so structural fidelity matters far less than keeping the words and
-    the line breaks. Scripts and styles are dropped rather than flattened into
-    the body, where they would be noise at best.
+    Dependency-free on purpose. The result is read by a language model and, when
+    somebody goes back through a thread, by a person — and both do better with
+    headings, lists and links intact than with a wall of stripped lines.
+
+    Order matters: inline emphasis and links are converted before the catch-all
+    tag strip, or their text survives and their structure does not.
     """
     if not html:
         return ""
     text = _DROP_RE.sub(" ", html)
-    text = _BLOCK_END_RE.sub("\n", text)
+    for pattern, replacement in _MARKDOWN_RULES:
+        text = pattern.sub(replacement, text)
     text = _TAG_RE.sub("", text)
-    for entity, char in (
-        ("&nbsp;", " "), ("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"),
-        ("&quot;", '"'), ("&#39;", "'"), ("&apos;", "'"),
-    ):
+    for entity, char in _ENTITIES:
         text = text.replace(entity, char)
-    lines = [line.strip() for line in text.split("\n")]
-    return "\n".join(line for line in lines if line).strip()
+    lines = [line.rstrip() for line in text.split("\n")]
+    return _BLANKS_RE.sub("\n\n", "\n".join(lines)).strip()
+
+
+# Kept as the old name so nothing else has to change; it is the same job done
+# better.
+html_to_text = html_to_markdown
 
 
 def _mask(addr: str) -> str:
@@ -235,7 +297,7 @@ async def _reply(db: AsyncSession, sender: str, subject: str, body: str,
         return "captured_trusted_contact"
 
     response_text = await claude_service.chat(
-        db, conversation.id, body, sender_role=role,
+        db, conversation.id, describe_message(sender, subject, body), sender_role=role,
         sender_member=member if role == "family" else None,
         sender_user=member if role == "owner" else None,
         channel="email",
