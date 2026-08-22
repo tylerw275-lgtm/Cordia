@@ -238,3 +238,69 @@ def test_the_naples_capture_note_has_no_emoji():
     assert note_lines
     for line in note_lines:
         assert line.isascii(), line.strip()
+
+
+# --- the nightly condense ----------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_one_unsummarisable_conversation_does_not_stop_the_rest(db, mocker):
+    """It runs with nobody watching, over every conversation there is."""
+    import contextlib
+    from datetime import datetime, timedelta, timezone
+
+    from app.models.conversation import Conversation, Message
+    from app.scheduler.jobs import history_condense
+    from app.services import history_summary
+
+    long_ago = datetime.now(timezone.utc) - timedelta(days=30)
+    for key in ("+16157080002", "+16157080001", "+16153101552"):
+        convo = Conversation(phone_number=key)
+        db.add(convo)
+        await db.commit()
+        for i in range(8):
+            db.add(Message(conversation_id=convo.id, role="user",
+                           content=f"old {i}", created_at=long_ago + timedelta(minutes=i)))
+        await db.commit()
+
+    @contextlib.asynccontextmanager
+    async def _fake():
+        yield db
+
+    mocker.patch.object(history_condense, "get_db_session", _fake)
+
+    seen = []
+
+    async def flaky(session, conversation, now=None):
+        seen.append(conversation.phone_number)
+        if conversation.phone_number == "+16157080001":
+            raise RuntimeError("this one is broken")
+        return True
+
+    mocker.patch.object(history_summary, "summarise", new=flaky)
+
+    # The job must survive a summarise() that raises, even though the real one
+    # never does — a future edit could change that.
+    try:
+        await history_condense.condense_old_conversations()
+    except RuntimeError:
+        pytest.fail("one bad conversation stopped the whole nightly run")
+
+    assert len(seen) == 3, f"stopped early: {seen}"
+
+
+@pytest.mark.asyncio
+async def test_nothing_old_enough_means_no_work_at_all(db, mocker):
+    import contextlib
+
+    from app.scheduler.jobs import history_condense
+    from app.services import history_summary
+
+    @contextlib.asynccontextmanager
+    async def _fake():
+        yield db
+
+    mocker.patch.object(history_condense, "get_db_session", _fake)
+    summarise = mocker.patch.object(history_summary, "summarise", new=mocker.AsyncMock())
+
+    await history_condense.condense_old_conversations()
+    assert not summarise.called

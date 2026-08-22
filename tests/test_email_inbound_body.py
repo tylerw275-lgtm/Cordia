@@ -57,6 +57,16 @@ async def _post(client, payload):
     return await client.post("/webhook/email", content=body, headers=headers)
 
 
+def _delivered(chat) -> str:
+    """The message the model was given.
+
+    Matched as a substring rather than by equality: the turn now carries a short
+    "[email from ... subject: ...]" header so a conversation read back months
+    later explains itself. What matters is that the body arrived.
+    """
+    return next(a for a in chat.call_args.args if isinstance(a, str))
+
+
 @pytest.mark.asyncio
 async def test_metadata_only_webhook_fetches_the_body_and_replies(client, mocker):
     fetch = mocker.patch.object(
@@ -72,7 +82,7 @@ async def test_metadata_only_webhook_fetches_the_body_and_replies(client, mocker
     assert r.status_code == 200
     assert r.json()["status"] == "replied_as_owner"
     fetch.assert_awaited_once_with("56761188-7520-42d8-8898-ff6fc54ce618")
-    assert "What did the car service quote?" in chat.call_args.args
+    assert "What did the car service quote?" in _delivered(chat)
     assert send.called
 
 
@@ -88,7 +98,8 @@ async def test_html_only_message_is_converted_to_text(client, mocker):
     r = await _post(client, _received())
 
     assert r.status_code == 200
-    assert "Book it\nfor Friday" in chat.call_args.args
+    # Bold survives as markdown now, rather than being flattened away.
+    assert "Book it\n\nfor **Friday**" in _delivered(chat)
 
 
 @pytest.mark.asyncio
@@ -119,7 +130,7 @@ async def test_inline_body_is_used_without_fetching(client, mocker):
 
     assert r.status_code == 200
     assert not fetch.called
-    assert "already here" in chat.call_args.args
+    assert "already here" in _delivered(chat)
 
 
 @pytest.mark.asyncio
@@ -139,18 +150,23 @@ async def test_delivery_receipts_never_trigger_a_fetch(client, mocker):
 
 @pytest.mark.asyncio
 async def test_oversized_body_is_capped(client, mocker):
-    from app.api.email import _MAX_BODY_CHARS
+    """The cap is config now, and below the history window rather than above
+    it: at 50,000 characters one forwarded thread could evict a conversation."""
+    from app.config import settings
+
+    cap = settings.inbound_email_max_chars
     mocker.patch.object(
         email_service, "fetch_received_email",
-        return_value={"text": "x" * (_MAX_BODY_CHARS + 5000), "html": None},
+        return_value={"text": "x" * (cap + 5000), "html": None},
     )
     chat = mocker.patch("app.services.claude_service.chat", return_value="ok")
     mocker.patch("app.services.email_service.send_email", return_value={"sent": True})
 
     await _post(client, _received())
 
-    delivered = next(a for a in chat.call_args.args if isinstance(a, str) and a.startswith("x"))
-    assert len(delivered) == _MAX_BODY_CHARS
+    delivered = _delivered(chat)
+    assert len(delivered) < settings.history_max_chars
+    assert "more characters not shown" in delivered
 
 
 # --- the HTML converter itself ---------------------------------------------
@@ -161,7 +177,9 @@ def test_html_to_text_drops_script_and_style():
 
 
 def test_html_to_text_decodes_entities_and_keeps_breaks():
-    assert html_to_text("<p>A &amp; B</p><br><p>C</p>") == "A & B\nC"
+    """Paragraphs are separated by a blank line now, which is what markdown
+    needs to render them as paragraphs rather than one run-on block."""
+    assert html_to_text("<p>A &amp; B</p><br><p>C</p>") == "A & B\n\nC"
 
 
 def test_html_to_text_on_empty_input():

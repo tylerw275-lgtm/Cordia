@@ -9,6 +9,7 @@ from app.config import settings
 from app.scheduler.jobs.birthday_prep import send_birthday_prep
 from app.scheduler.jobs.email_poll import poll_inbound_email
 from app.scheduler.jobs.flight_monitor import monitor_flight_prices
+from app.scheduler.jobs.history_condense import condense_old_conversations
 from app.scheduler.jobs.morning_brief import send_morning_brief
 from app.scheduler.jobs.naples_poll import poll_naples_inbox
 from app.scheduler.jobs.reminders import send_birthday_reminders, send_lease_reminders
@@ -101,6 +102,18 @@ def setup_scheduler() -> None:
             max_instances=1,
         )
         logger.info(f"Naples inbox polling every {settings.naples_poll_interval_seconds}s")
+
+    # Quiet hour: it reads whole conversations and writes summaries, and there
+    # is no reason for it to compete with someone actually texting.
+    _scheduler.add_job(
+        condense_old_conversations,
+        trigger="cron",
+        hour=settings.history_summary_hour,
+        minute=15,
+        id="history_condense",
+        replace_existing=True,
+        max_instances=1,
+    )
 
     _scheduler.add_listener(_on_job_error, EVENT_JOB_ERROR)
     _scheduler.start()

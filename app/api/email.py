@@ -20,7 +20,8 @@ router = APIRouter()
 
 # Generous enough for a forwarded document, small enough that one message
 # cannot dominate a turn.
-_MAX_BODY_CHARS = 50_000
+# Bounded by config, below the history window rather than above it.
+# See settings.inbound_email_max_chars.
 
 
 # Resend signs webhooks with the Svix scheme: the signed payload is
@@ -157,7 +158,7 @@ async def receive_email(request: Request, db: AsyncSession = Depends(get_db)) ->
             return JSONResponse(status_code=500, content={"status": "content_fetch_failed"})
         # Cap the fetched body: an inbound message is attacker-influenced input
         # and this is the one path where its full length reaches a model turn.
-        body = (fetched.get("text") or email_inbound.html_to_text(fetched.get("html") or ""))[:_MAX_BODY_CHARS]
+        body = email_inbound.readable_body(fetched.get("text"), fetched.get("html"))
         sender = sender or email_inbound.extract_email(fetched.get("from"))
         subject = subject or str(fetched.get("subject") or "")
 
