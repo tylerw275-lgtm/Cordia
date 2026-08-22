@@ -352,6 +352,47 @@ async def summary(db: AsyncSession, since: datetime | None = None) -> dict:
     }
 
 
+async def inbound_email_health(db: AsyncSession) -> dict:
+    """Has an inbound email ever actually reached us, and what happened to it.
+
+    The one question nobody could answer while inbound email appeared to do
+    nothing: is the provider calling us at all? Outbound working proves the API
+    key; it proves nothing about the webhook. Everything here is already in the
+    ledger — this just asks it the useful question.
+    """
+    async def _latest(*event_types: str):
+        row = (await db.execute(
+            select(UsageEvent)
+            .where(UsageEvent.event_type.in_(event_types))
+            .order_by(UsageEvent.occurred_at.desc())
+            .limit(1)
+        )).scalars().first()
+        return row
+
+    replied = await _latest("email_in")
+    ignored = await _latest("email_ignored")
+    refused = (await db.execute(
+        select(UsageEvent)
+        .where(UsageEvent.event_type == "error")
+        .order_by(UsageEvent.occurred_at.desc())
+        .limit(20)
+    )).scalars().all()
+    refused = next(
+        (r for r in refused
+         if str((r.details or {}).get("where", "")).startswith("email_")), None
+    )
+
+    return {
+        "last_accepted": replied.occurred_at if replied else None,
+        "last_ignored": ignored.occurred_at if ignored else None,
+        "last_ignored_reason": (ignored.details or {}).get("reason") if ignored else None,
+        "last_failure": refused.occurred_at if refused else None,
+        "last_failure_where": (refused.details or {}).get("where") if refused else None,
+        "last_failure_detail": (refused.details or {}).get("detail") if refused else None,
+        "ever_received_anything": bool(replied or ignored or refused),
+    }
+
+
 async def recent_errors(db: AsyncSession, limit: int = 10) -> list[dict]:
     """The last few failures, newest first, for the dashboard."""
     rows = (await db.execute(

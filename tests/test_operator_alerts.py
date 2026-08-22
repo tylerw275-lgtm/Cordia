@@ -610,3 +610,74 @@ async def test_the_fetch_url_is_config_not_a_constant(mocker):
 
     await email_service.fetch_received_email("re_abc")
     assert called["url"] == "https://example.test/inbound/re_abc"
+
+
+# --- has any mail ever actually arrived? ------------------------------------
+
+@pytest.mark.asyncio
+async def test_the_dashboard_says_plainly_when_nothing_has_ever_arrived(db):
+    """The question nobody could answer while inbound email appeared to do
+    nothing. Sending working proves the API key and proves nothing about the
+    webhook."""
+    health = await usage_service.inbound_email_health(db)
+    assert health["ever_received_anything"] is False
+
+
+@pytest.mark.asyncio
+async def test_it_notices_a_message_that_arrived_and_was_answered(db):
+    await usage_service.record(db, "email_in", actor="tyler@ai-genpartners.com")
+    await db.commit()
+
+    health = await usage_service.inbound_email_health(db)
+    assert health["ever_received_anything"] is True
+    assert health["last_accepted"] is not None
+
+
+@pytest.mark.asyncio
+async def test_it_names_why_the_last_one_was_ignored(db):
+    await usage_service.record(db, "email_ignored", actor="stranger@example.com",
+                               details={"reason": "ignored_unknown_sender"})
+    await db.commit()
+
+    health = await usage_service.inbound_email_health(db)
+    assert health["last_ignored_reason"] == "ignored_unknown_sender"
+    assert health["ever_received_anything"] is True
+
+
+@pytest.mark.asyncio
+async def test_it_surfaces_an_inbound_failure_with_its_detail(db):
+    """A wrong fetch endpoint shows as the status and URL, in the browser."""
+    await usage_service.record(db, "error", actor="re_abc", details={
+        "where": "email_inbound_fetch", "error_type": "ReceivedEmailUnavailable",
+        "detail": "404 Not Found (GET https://api.resend.com/emails/receiving/re_abc)",
+    })
+    await db.commit()
+
+    health = await usage_service.inbound_email_health(db)
+    assert health["last_failure_where"] == "email_inbound_fetch"
+    assert "api.resend.com" in health["last_failure_detail"]
+
+
+@pytest.mark.asyncio
+async def test_an_unrelated_error_is_not_read_as_an_email_failure(db):
+    """sms_reply failures are not evidence about inbound email."""
+    await usage_service.record(db, "error", actor="+16157080002", details={
+        "where": "sms_reply", "error_type": "BadRequestError"})
+    await db.commit()
+
+    health = await usage_service.inbound_email_health(db)
+    assert health["last_failure"] is None
+    assert health["ever_received_anything"] is False
+
+
+def test_the_dashboard_names_the_webhook_url_when_nothing_has_arrived():
+    """So the fix is a copy-paste, not another investigation."""
+    from app.api.dashboard import _inbound_health_rows
+
+    html = _inbound_health_rows({
+        "ever_received_anything": False, "last_accepted": None,
+        "last_ignored": None, "last_ignored_reason": None,
+        "last_failure": None, "last_failure_where": None, "last_failure_detail": None,
+    })
+    assert "email.received" in html
+    assert "/webhook/email" in html
