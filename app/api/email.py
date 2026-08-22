@@ -89,16 +89,29 @@ async def receive_email(request: Request, db: AsyncSession = Depends(get_db)) ->
     raw_body = await request.body()
     authorized = False
     if settings.email_webhook_signing_secret:
+        reason = "signature_invalid"
         authorized = _verify_svix_signature(
             settings.email_webhook_signing_secret, request.headers, raw_body
         )
     elif settings.email_inbound_secret:
+        reason = "url_secret_invalid"
         supplied = request.query_params.get("secret") or request.headers.get("X-Webhook-Secret") or ""
         authorized = hmac.compare_digest(
             supplied.encode("utf-8"), settings.email_inbound_secret.encode("utf-8")
         )
+    else:
+        # Neither secret configured. Failing closed is right, but silently
+        # failing closed means outbound email keeps working while every reply
+        # is refused — which reads as "it emails me but never answers me".
+        reason = "no_secret_configured"
     if not authorized:
-        logger.warning("Inbound email rejected — signature or secret did not verify")
+        logger.warning(f"Inbound email rejected ({reason})")
+        # Before the body is parsed, so none of the other reporting can see it.
+        try:
+            from app.services import alerts
+            await alerts.notify_inbound_webhook_rejected(reason)
+        except Exception as e:                   # pragma: no cover - defensive
+            logger.error(f"Could not report a rejected inbound webhook: {e}")
         return Response(status_code=403)
 
     payload = await _parse_inbound(request, raw_body)

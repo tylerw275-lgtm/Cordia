@@ -135,7 +135,11 @@ async def _send_resend(to: str, subject: str, html: str, text: str) -> dict:
                 "https://api.resend.com/emails",
                 headers={"Authorization": f"Bearer {settings.email_api_key}"},
                 json={
-                    "from": settings.email_from,
+                    # from_address(), not the raw setting: the Gmail path uses
+                    # the helper and falls back to the mailbox, so clearing
+                    # EMAIL_FROM left Gmail working and Resend posting an empty
+                    # From, which the API rejects.
+                    "from": from_address(),
                     "to": [to],
                     "subject": subject,
                     "html": html,

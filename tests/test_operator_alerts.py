@@ -447,3 +447,55 @@ def test_config_says_inbound_is_unreachable_when_gmail_has_no_password(mocker):
     out = asyncio.get_event_loop_policy().new_event_loop().run_until_complete(health_config())
 
     assert out["email"]["inbound_reachable"] is False
+
+
+# --- the webhook refusing deliveries at the door ----------------------------
+
+@pytest.mark.asyncio
+async def test_a_refused_webhook_names_the_missing_variable(sent):
+    """With neither secret set the endpoint 403s every delivery while outbound
+    keeps working — which reads as "it emails me but never replies"."""
+    await alerts.notify_inbound_webhook_rejected("no_secret_configured")
+
+    body = _body(sent.await_args)
+    assert "EMAIL_WEBHOOK_SIGNING_SECRET" in body
+    assert "Every inbound email is being rejected" in body
+
+
+@pytest.mark.parametrize("reason", ["no_secret_configured", "signature_invalid", "url_secret_invalid"])
+@pytest.mark.asyncio
+async def test_every_rejection_reason_explains_itself(sent, reason):
+    await alerts.notify_inbound_webhook_rejected(reason)
+    assert len(_body(sent.await_args)) > 300, reason
+
+
+@pytest.mark.asyncio
+async def test_someone_hammering_the_endpoint_is_one_alert(sent):
+    """It is a public URL."""
+    for _ in range(60):
+        await alerts.notify_inbound_webhook_rejected("signature_invalid")
+    assert sent.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_the_rejection_is_reported_through_the_real_endpoint(client, mocker, sent):
+    """And the caller still gets its 403 — the alert must not change the answer."""
+    mocker.patch.object(settings, "email_webhook_signing_secret", "")
+    mocker.patch.object(settings, "email_inbound_secret", "")
+
+    response = await client.post("/webhook/email", json={"type": "email.received"})
+
+    assert response.status_code == 403
+    assert sent.await_count == 1
+    assert "no_secret_configured" in sent.await_args.kwargs["subject"]
+
+
+@pytest.mark.asyncio
+async def test_a_broken_alert_does_not_change_the_403(client, mocker):
+    mocker.patch.object(settings, "email_webhook_signing_secret", "")
+    mocker.patch.object(settings, "email_inbound_secret", "")
+    mocker.patch("app.services.email_service.send_email",
+                 new=mocker.AsyncMock(side_effect=RuntimeError("SMTP down")))
+
+    response = await client.post("/webhook/email", json={"type": "email.received"})
+    assert response.status_code == 403

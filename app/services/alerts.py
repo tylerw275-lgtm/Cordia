@@ -289,3 +289,58 @@ async def notify_inbound_email_dropped(
         ("email_inbound", reason), body,
         subject=f"[Cordia] Inbound email ignored: {reason}",
     )
+
+
+_WEBHOOK_REJECTIONS = {
+    "no_secret_configured": (
+        "Neither EMAIL_WEBHOOK_SIGNING_SECRET nor EMAIL_INBOUND_SECRET is set, so the "
+        "endpoint refuses everything — it fails closed on purpose, because an unset "
+        "secret used to mean anyone could POST a forged sender and drive a model turn.\n\n"
+        "**Every inbound email is being rejected right now.** Outbound still works, which "
+        "is why this looks like \"it emails me but never replies\".\n\n"
+        "Fix: copy the signing secret (`whsec_...`) from the Resend dashboard's webhook "
+        "settings into EMAIL_WEBHOOK_SIGNING_SECRET in Railway."
+    ),
+    "signature_invalid": (
+        "EMAIL_WEBHOOK_SIGNING_SECRET is set but the signature did not verify. Either the "
+        "secret in Railway no longer matches the one in the Resend dashboard, or something "
+        "other than Resend is posting to the endpoint."
+    ),
+    "url_secret_invalid": (
+        "EMAIL_INBOUND_SECRET is set but the value in the request did not match. Check the "
+        "?secret= on the webhook URL configured at the provider."
+    ),
+}
+
+
+async def notify_inbound_webhook_rejected(reason: str) -> bool:
+    """The inbound email endpoint turned a delivery away.
+
+    Worth its own alert rather than folding into the dropped-email one, because
+    this happens *before* the message is parsed: no sender, no subject, and none
+    of the other reporting sees it. It is also the single most likely cause of
+    inbound email appearing to do nothing at all.
+    """
+    if _SENDING:
+        return False
+
+    def body(suppressed: int, first_seen) -> str:
+        text = (
+            "## Inbound email is being refused at the door\n\n"
+            f"**Reason:** `{reason}`\n"
+            f"**When:** {_now().isoformat(timespec='seconds')}\n"
+            + _also_line(suppressed, first_seen)
+        )
+        explain = _WEBHOOK_REJECTIONS.get(reason)
+        if explain:
+            text += f"\n\n{explain}\n"
+        return text + (
+            f"\n\n---\n\nThe provider is being told 403, so it will retry and then give up. "
+            f"Check its delivery log for failed attempts.\n\n"
+            f"Config: {settings.public_base_url.rstrip('/')}/health/config"
+        )
+
+    return await _throttled(
+        ("email_webhook", reason), body,
+        subject=f"[Cordia] Inbound email webhook rejected: {reason}",
+    )
