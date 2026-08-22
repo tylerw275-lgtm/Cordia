@@ -16,6 +16,7 @@ from app.models.family import (
     FamilyMember,
     FamilyRequest,
 )
+from app.utils.email_address import normalize_email
 from app.utils.phone import normalize_phone
 
 
@@ -33,12 +34,12 @@ async def resolve_member_by_phone(db: AsyncSession, phone: str) -> FamilyMember 
 
 async def resolve_member_by_email(db: AsyncSession, email: str) -> FamilyMember | None:
     """Find a family member whose stored email matches (case-insensitive)."""
-    target = (email or "").strip().lower()
+    target = normalize_email(email)
     if not target:
         return None
     result = await db.execute(select(FamilyMember).where(FamilyMember.email.isnot(None)))
     for member in result.scalars().all():
-        if (member.email or "").strip().lower() == target:
+        if normalize_email(member.email) == target:
             return member
     return None
 

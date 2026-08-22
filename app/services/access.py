@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.services import consent_service, family_circle_service, principal_service
+from app.utils.email_address import emails_match
 from app.utils.phone import phones_match
 
 logger = logging.getLogger(__name__)
@@ -78,7 +79,11 @@ async def resolve(db: AsyncSession, *, phone: str = "", email: str = "") -> Send
     if phone and (phones_match(phone, settings.cordia_phone_number)
                   or phones_match(phone, settings.cordia_test_phone_number)):
         return Sender("opted_out" if status == "opted_out" else "owner")
-    if email and settings.owner_email and email.strip().lower() == settings.owner_email.strip().lower():
+    # Compared as mailboxes, not as strings. OWNER_EMAIL held
+     # "Cordia <Tyler@ai-genpartners.com>" and every reply she sent was dropped
+     # as an unknown sender, while outbound kept working because a display name
+     # in a To: header is perfectly valid.
+    if email and emails_match(email, settings.owner_email):
         return Sender("owner")
 
     member = None

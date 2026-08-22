@@ -9,6 +9,7 @@ import re
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.utils.email_address import normalize_email
 from app.services import claude_service, email_service, turn_queue
 
 logger = logging.getLogger(__name__)
@@ -24,10 +25,8 @@ _ON_WROTE_RE = re.compile(r"^On .+ wrote:$", re.IGNORECASE)
 
 
 def extract_email(value) -> str:
-    if isinstance(value, dict):
-        value = value.get("email") or value.get("address") or ""
-    m = _EMAIL_RE.search(str(value or ""))
-    return m.group(0).lower() if m else ""
+    """The bare address inside a From header, payload field or dict."""
+    return normalize_email(value)
 
 
 def strip_quoted(body: str) -> str:
@@ -79,14 +78,15 @@ def _mask(addr: str) -> str:
 async def _resolve_trusted_contact(db: AsyncSession, sender: str):
     """A contact Cordia marked trusted_inbound — their mail is captured as an
     FYI for Cordia (schedules, dates, updates), never conversed with."""
-    from sqlalchemy import func, select
+    from sqlalchemy import select
     from app.models.contact import Contact
-    result = await db.execute(
-        select(Contact)
-        .where(Contact.trusted_inbound.is_(True))
-        .where(func.lower(Contact.email) == sender)
-    )
-    return result.scalars().first()
+    # Compared in Python, not SQL: a stored address may carry a display name
+    # from the dashboard form, and func.lower() on that never matches a bare
+    # sender. Trusted contacts are a short list.
+    rows = (await db.execute(
+        select(Contact).where(Contact.trusted_inbound.is_(True))
+    )).scalars()
+    return next((c for c in rows if normalize_email(c.email) == sender), None)
 
 
 async def _resolve_sender(db: AsyncSession, sender: str):
@@ -174,7 +174,8 @@ async def _dropped(reason: str, sender: str | None, subject: str | None) -> str:
 async def process_inbound_email(db: AsyncSession, sender: str, subject: str, body: str) -> str:
     """Returns a short status describing what happened, so callers (and the
     provider's webhook log) can see why a message produced no reply."""
-    sender = (sender or "").strip().lower()
+    # Normalised as a mailbox: a display name here dropped every reply.
+    sender = normalize_email(sender) or (sender or "").strip().lower()
     body = strip_quoted(body or "")
     if not sender:
         return await _dropped("ignored_no_sender", sender, subject)
