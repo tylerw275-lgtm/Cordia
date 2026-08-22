@@ -9,7 +9,7 @@ from sqlalchemy import select
 from app.config import settings
 from app.database import get_db_session
 from app.models.trips import FlightWatch, PriceSnapshot
-from app.services import claude_service, family_circle_service, family_service, sms_service
+from app.services import claude_service, family_circle_service, family_service, sms_service, task_service
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +54,12 @@ async def compose_brief(db) -> str | None:
     drops = await _recent_price_drops(db)
     if drops:
         parts.append("Fare drops: " + "; ".join(drops))
+
+    # What the family still owes before a deadline. Cordia only — the point of
+    # tracking it is that she can chase people herself, not that Cord does.
+    outstanding = await task_service.brief_lines(db, today)
+    if outstanding:
+        parts.append("Still outstanding: " + "; ".join(outstanding))
 
     pending = await family_circle_service.get_unsurfaced_inputs(db)
     if pending:

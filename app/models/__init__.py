@@ -14,6 +14,7 @@ from app.models.outbound import OutboundMessage
 from app.models.project import Project
 from app.models.real_estate import Lease, LeaseClause, LeaseReminder
 from app.models.usage import UsageEvent
+from app.models.task import FamilyTask
 from app.models.trips import FlightWatch, PriceSnapshot, Trip
 
 __all__ = [
@@ -36,6 +37,7 @@ __all__ = [
     "OutboundMessage",
     "PriceSnapshot",
     "Project",
+    "FamilyTask",
     "Trip",
     "UsageEvent",
 ]

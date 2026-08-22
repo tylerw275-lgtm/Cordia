@@ -181,6 +181,12 @@ class Settings(BaseSettings):
     # is what evicted everything else.
     history_max_tool_result_chars: int = 3_000
 
+    # Keeping track of what a group still has to do before a trip. Anything
+    # outstanding surfaces in the morning brief, which goes to Cordia and to
+    # nobody else. Cord never chases the assignee: the family did not sign up to
+    # be nagged by an assistant, least of all one speaking for her.
+    task_lead_days: int = 21   # how far ahead of the date to start mentioning it
+
     enable_flight_search: bool = True
     enable_lease_review: bool = True
     enable_family_coordination: bool = True
