@@ -90,6 +90,10 @@ INTENTS: tuple[Intent, ...] = (
         deep=True, playbook="service_sourcing",
         words=(
             "car service", "town car", "driver", "limo", "chauffeur",
+            # She books a taxi at both ends of every trip and names the firm she
+            # uses. Without these, "get me a taxi from the airport" matched
+            # "airport" and was read as trip planning rather than a booking.
+            "taxi", "taxis", "cab", "shuttle", "transfer", "pick us up",
             "caterer", "catering", "cleaner", "cleaning service", "contractor",
             "find me a", "book a", "booking a", "hire", "quote", "quotes",
             "cheapest", "best price", "price out", "how much would",
@@ -148,15 +152,30 @@ _DEEP_ONLY = _compile((
 def match(message: str) -> Intent | None:
     """The intent of a message, or None when nothing matches.
 
+    Scored, not first-past-the-post. Her real request was "plan a trip to St
+    Thomas for me and my kids making arrangements for flights for everyone and
+    taxi when we get there and packing list" — one word of which, "packing",
+    matched the outfitting-a-house family, which sits earlier in the table. She
+    got a relocation adviser for a holiday. Counting matches gives trip planning
+    two ("trip", "flights") against one, which is the right reading of a
+    sentence that is mostly about a trip.
+
+    Ties fall back to table order, so the more specific family still wins where
+    a message genuinely sits between two.
+
     A miss is the normal case and costs nothing: the project engine derives an
     interview from first principles, and an ordinary message gets the ordinary
     budget.
     """
     text = message or ""
+    best, best_score = None, 0
     for intent in INTENTS:
-        if intent._pattern.search(text):
-            return intent
-    return None
+        # Distinct keywords, not occurrences: saying "trip" four times is one
+        # signal, not four.
+        hits = len({m.lower() for m in intent._pattern.findall(text)})
+        if hits > best_score:
+            best, best_score = intent, hits
+    return best
 
 
 def detect_context(message: str) -> str | None:
