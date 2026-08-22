@@ -72,10 +72,15 @@ async def test_an_approved_relative_still_gets_through_by_email(db):
 @pytest.mark.asyncio
 async def test_a_rejected_sender_gets_no_reply_at_all(db, mocker):
     """Not an explanation either — a reply would confirm the roster to whoever
-    is probing it."""
+    is probing it.
+
+    Checked by recipient rather than by "was send_email called", because the
+    operator now gets an alert about the drop through the same function. Nothing
+    goes to *them*; something does go to us."""
     await _relative(db)
     await _consent(db, RELATIVE_PHONE, status="rejected")
-    send = mocker.patch("app.services.email_service.send_email", new=mocker.AsyncMock())
+    send = mocker.patch("app.services.email_service.send_email",
+                        new=mocker.AsyncMock(return_value={"sent": True}))
     chat = mocker.patch("app.services.claude_service.chat", new=mocker.AsyncMock())
 
     status = await email_inbound.process_inbound_email(
@@ -83,7 +88,8 @@ async def test_a_rejected_sender_gets_no_reply_at_all(db, mocker):
     )
 
     assert status == "ignored_unapproved_sender"
-    assert not send.called
+    recipients = [c.kwargs.get("to") for c in send.await_args_list]
+    assert RELATIVE_EMAIL not in recipients, "the rejected sender was written back to"
     assert not chat.called, "a rejected sender was still billed for a model turn"
 
 

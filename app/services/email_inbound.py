@@ -153,15 +153,33 @@ def _fence_capture(name: str, subject: str, body: str) -> str:
     )
 
 
+async def _dropped(reason: str, sender: str | None, subject: str | None) -> str:
+    """Record and report an email that produced no reply, then return the status.
+
+    Staying silent towards the sender is right — a reply would confirm the
+    address to whoever is probing it. Staying silent towards the operator is
+    how "it won't answer my emails" arrived twice with nothing to go on.
+    """
+    try:
+        from app.services import alerts, usage_service
+        await usage_service.record_standalone(
+            "email_ignored", actor=sender, cost_usd=0.0, details={"reason": reason},
+        )
+        await alerts.notify_inbound_email_dropped(reason, sender, subject)
+    except Exception as e:                       # pragma: no cover - defensive
+        logger.error(f"Could not report a dropped inbound email: {e}")
+    return reason
+
+
 async def process_inbound_email(db: AsyncSession, sender: str, subject: str, body: str) -> str:
     """Returns a short status describing what happened, so callers (and the
     provider's webhook log) can see why a message produced no reply."""
     sender = (sender or "").strip().lower()
     body = strip_quoted(body or "")
     if not sender:
-        return "ignored_no_sender"
+        return await _dropped("ignored_no_sender", sender, subject)
     if not body:
-        return "ignored_empty_body"
+        return await _dropped("ignored_empty_body", sender, subject)
 
     role, member, conv_key = await _resolve_sender(db, sender)
     if role == "unapproved":
@@ -171,13 +189,13 @@ async def process_inbound_email(db: AsyncSession, sender: str, subject: str, bod
             f"Email from {_mask(sender)} ({member.name}) — on the roster but not "
             "approved by Cordia; ignored"
         )
-        return "ignored_unapproved_sender"
+        return await _dropped("ignored_unapproved_sender", sender, subject)
     if role == "unknown":
         logger.warning(
             f"Inbound email from unknown sender {_mask(sender)} — ignored. "
             "Set OWNER_EMAIL to this address if it is Cordia's."
         )
-        return "ignored_unknown_sender"
+        return await _dropped("ignored_unknown_sender", sender, subject)
 
     logger.info(f"Inbound email from {_mask(sender)} (role={role}): {subject[:50]}")
 

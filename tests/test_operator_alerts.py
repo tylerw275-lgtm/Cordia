@@ -320,3 +320,130 @@ def test_the_help_reply_is_still_one_segment():
     from app.services.gsm import to_gsm
 
     assert usage_service.sms_segments(to_gsm(sms._HELP_MSG)) == 1
+
+
+# --- email that arrives and gets no answer ----------------------------------
+
+@pytest.mark.asyncio
+async def test_an_ignored_email_tells_the_operator_why(sent):
+    """"It sends me emails but won't reply to mine" reached the operator twice
+    with nothing to go on, because every drop was a log line and a 200."""
+    await alerts.notify_inbound_email_dropped(
+        "ignored_unknown_sender", "tylerw275@gmail.com", "Re: Your flight options")
+
+    body = _body(sent.await_args)
+    assert "ignored_unknown_sender" in body
+    assert "OWNER_EMAIL" in body, "the alert names the symptom but not the fix"
+    assert "Re: Your flight options" in body
+
+
+@pytest.mark.asyncio
+async def test_the_dropped_senders_address_is_masked(sent):
+    await alerts.notify_inbound_email_dropped("ignored_unknown_sender", "someone@example.com")
+    assert "someone@example.com" not in _body(sent.await_args)
+
+
+@pytest.mark.parametrize("reason", [
+    "ignored_unknown_sender", "ignored_unapproved_sender",
+    "ignored_empty_body", "ignored_no_sender",
+])
+@pytest.mark.asyncio
+async def test_every_drop_reason_explains_itself(sent, reason):
+    """A reason code alone is a lookup task. The alert should name the fix."""
+    await alerts.notify_inbound_email_dropped(reason, "someone@example.com")
+    assert "What that means" in _body(sent.await_args), reason
+
+
+@pytest.mark.asyncio
+async def test_a_stream_of_spam_is_one_alert_not_hundreds(sent):
+    """The address is public on the consent page."""
+    for i in range(50):
+        await alerts.notify_inbound_email_dropped("ignored_unknown_sender", f"spam{i}@example.com")
+    assert sent.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_a_different_drop_reason_is_its_own_alert(sent):
+    await alerts.notify_inbound_email_dropped("ignored_unknown_sender", "a@example.com")
+    await alerts.notify_inbound_email_dropped("ignored_empty_body", "b@example.com")
+    assert sent.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_the_drop_is_reported_through_the_real_path(db, mocker, sent):
+    """Through process_inbound_email, not by calling the alert directly."""
+    from app.services import email_inbound
+
+    mocker.patch.object(settings, "owner_email", "cordia@example.com")
+    mocker.patch("app.services.usage_service.record_standalone", new=mocker.AsyncMock())
+
+    status = await email_inbound.process_inbound_email(
+        db, "stranger@example.com", "hello", "anyone there")
+
+    assert status == "ignored_unknown_sender"
+    assert sent.await_count == 1
+    assert sent.await_args.kwargs["to"] == OPERATOR
+
+
+@pytest.mark.asyncio
+async def test_a_dropped_email_is_counted_in_the_ledger(db, mocker, sent):
+    """So the dashboard shows how much mail is bouncing off, not just the one
+    that prompted a complaint."""
+    from app.services import email_inbound
+
+    recorded = mocker.patch("app.services.usage_service.record_standalone",
+                            new=mocker.AsyncMock())
+    mocker.patch.object(settings, "owner_email", "cordia@example.com")
+
+    await email_inbound.process_inbound_email(db, "stranger@example.com", "hi", "hello")
+
+    assert recorded.await_args.args[0] == "email_ignored"
+    assert recorded.await_args.kwargs["details"]["reason"] == "ignored_unknown_sender"
+
+
+@pytest.mark.asyncio
+async def test_a_broken_alert_never_stops_the_webhook_returning(db, mocker):
+    """The provider retries a non-200, and a retry storm over an email we were
+    always going to ignore helps nobody."""
+    from app.services import email_inbound
+
+    mocker.patch.object(settings, "owner_email", "cordia@example.com")
+    mocker.patch("app.services.usage_service.record_standalone",
+                 new=mocker.AsyncMock(side_effect=RuntimeError("ledger down")))
+
+    status = await email_inbound.process_inbound_email(db, "stranger@example.com", "hi", "hello")
+    assert status == "ignored_unknown_sender"
+
+
+# --- the config endpoint answers the question this raised -------------------
+
+def test_config_reports_whether_inbound_can_arrive_at_all(mocker):
+    """"inbound_polling: false" is true and useless on a Resend deployment.
+    The question is whether inbound is reachable by any route."""
+    import asyncio
+
+    from app.main import health_config
+
+    mocker.patch.object(settings, "enable_email", True)
+    mocker.patch.object(settings, "email_provider", "resend")
+    mocker.patch.object(settings, "email_webhook_signing_secret", "whsec_x")
+    out = asyncio.get_event_loop_policy().new_event_loop().run_until_complete(health_config())
+
+    assert out["email"]["inbound_path"] == "resend_webhook"
+    assert out["email"]["inbound_reachable"] is True
+    assert out["email"]["inbound_polling"] is False
+
+
+def test_config_says_inbound_is_unreachable_when_gmail_has_no_password(mocker):
+    """The most likely cause of "it sends but never replies"."""
+    import asyncio
+
+    from app.main import health_config
+
+    mocker.patch.object(settings, "enable_email", True)
+    mocker.patch.object(settings, "email_provider", "gmail")
+    mocker.patch.object(settings, "email_address", "cordiaassistant@gmail.com")
+    mocker.patch.object(settings, "email_app_password", "")
+    out = asyncio.get_event_loop_policy().new_event_loop().run_until_complete(health_config())
+
+    assert out["email"]["inbound_reachable"] is False
