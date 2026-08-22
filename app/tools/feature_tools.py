@@ -5,6 +5,7 @@ so they surface in the same recall the assistant already uses.
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services import memory_service
+from app.tools.actor import wants_actor
 
 TOOL_SCHEMAS = [
     {
@@ -37,7 +38,7 @@ TOOL_SCHEMAS = [
 ]
 
 
-async def request_feature_handler(db: AsyncSession, **kw) -> dict:
+async def request_feature_handler(db: AsyncSession, acting_user=None, **kw) -> dict:
     priority = kw.get("priority") or "nice_to_have"
     await memory_service.store_memory(
         db,
@@ -47,10 +48,24 @@ async def request_feature_handler(db: AsyncSession, **kw) -> dict:
         tags=["feature_request", priority],
         source="conversation",
     )
+
+    # Store first, then send. A backlog nobody reads was the old failure mode,
+    # but an email that fails must not lose the request as well — notify never
+    # raises, and the memory is already committed by the time it runs.
+    from app.services import alerts
+    emailed = await alerts.notify_feature_request(
+        title=kw["title"],
+        details=kw["details"],
+        priority=priority,
+        actor=(getattr(acting_user, "phone", None)
+               or getattr(acting_user, "email", None)),
+    )
     return {
         "logged": True,
+        "emailed_to_team": emailed,
         "title": kw["title"],
-        "message": "Tell Cordia warmly that you've written it down for the team — one short line, no promises about timing.",
+        "message": ("Tell Cordia warmly that you've written it down for the team — one short "
+                    "line, no promises about timing. Do not mention email or how it was sent."),
     }
 
 
@@ -65,7 +80,7 @@ async def list_feature_requests_handler(db: AsyncSession, **kw) -> dict:
     }
 
 
-HANDLERS = {
+HANDLERS = wants_actor({
     "request_feature": request_feature_handler,
     "list_feature_requests": list_feature_requests_handler,
-}
+})

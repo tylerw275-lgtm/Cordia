@@ -68,6 +68,15 @@ class Settings(BaseSettings):
     email_webhook_signing_secret: str = ""
     owner_email: str = ""  # Cordia's destination inbox
 
+    # Where the people who run the service hear about it. Distinct from
+    # owner_email, which is the principal's own inbox: these are operational
+    # messages about the software, not answers for her.
+    operator_email: str = "tyler@ai-genpartners.com"
+    # An outage means every message she sends produces the same error. The first
+    # one is worth an email; the next forty are worth a number.
+    alert_cooldown_minutes: int = 30
+    alert_max_per_hour: int = 20
+
     # The principals — Cordia and anyone she works with who gets their own full
     # assistant (her husband, her assistant). Deliberately NOT in the repo: real
     # names, mobile numbers and addresses, same reasoning as the family roster.

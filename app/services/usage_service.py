@@ -248,19 +248,37 @@ def _safe_detail(exc: BaseException) -> str | None:
     return text[:400] if text else None
 
 
-async def record_error(where: str, exc: BaseException, actor: str | None = None) -> None:
-    """Record that something broke, so a failure is visible without shell access.
+async def record_error(
+    where: str,
+    exc: BaseException,
+    actor: str | None = None,
+    message: str | None = None,
+) -> None:
+    """Record that something broke, and tell the operator.
 
     Always stores the exception type and where it happened. Stores the message
     too when it came from a library rather than from user input — diagnosing the
     same failure twice by asking someone to go and read a log is the thing this
     is meant to avoid.
+
+    Every error in the system already funnels through here, so this is also
+    where the operator alert belongs: sms_reply, tool failures and inbound email
+    are covered by writing it once, and so is whatever gets added next.
+    `message` is the text that triggered the failure — passed to the alert,
+    never into the stored row, which is rendered on a web page.
     """
     details = {"where": where, "error_type": type(exc).__name__}
     detail = _safe_detail(exc)
     if detail:
         details["detail"] = detail
     await record_standalone("error", actor=actor, cost_usd=0.0, details=details)
+
+    # After the ledger write, never before: an alert must not be able to cost us
+    # the record of what happened. alerts.notify_error swallows its own failures.
+    from app.services import alerts
+    await alerts.notify_error(
+        where, type(exc).__name__, detail=detail, actor=actor, message=message,
+    )
 
 
 async def record_email(address: str, outbound: bool) -> None:
