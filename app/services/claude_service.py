@@ -97,6 +97,36 @@ def _to_api_block(block: Any, role: str) -> dict | None:
     return {k: block[k] for k in keys if block.get(k) is not None}
 
 
+def _for_this_turn(blocks: list[dict]) -> list[dict]:
+    """Assistant blocks going straight back into the request they came from.
+
+    Not the same job as `_to_api_block`. That one rebuilds a turn out of the
+    database and drops whatever it does not recognise — correct there, wrong
+    here: inside a single turn a thinking block has to go back with its
+    signature intact, and the server-tool blocks behind a `pause_turn` have to
+    round-trip or the resume fails.
+
+    So this keeps every block and removes only what the API will not accept
+    back. Opus 5 returns `parsed_output` on text blocks; the SDK passes unknown
+    fields through untouched and `model_dump()` faithfully includes them, and
+    the next request is then rejected with "Extra inputs are not permitted" —
+    which killed her St Thomas plan at message 58 of a working turn.
+    """
+    cleaned: list[dict] = []
+    for block in blocks:
+        if not isinstance(block, dict):
+            cleaned.append(block)
+            continue
+        keys = _REPLAYABLE_KEYS.get(block.get("type"))
+        if keys is not None:
+            cleaned.append({k: block[k] for k in keys if block.get(k) is not None})
+        else:
+            # thinking, server_tool_use, web_search_tool_result, anything the
+            # API adds next: keep whole, minus the nulls model_dump() invents.
+            cleaned.append({k: v for k, v in block.items() if v is not None})
+    return cleaned
+
+
 def _decode_content(raw: str, role: str) -> str | list[dict]:
     """Persisted content is either plain text or a JSON list of blocks."""
     if not raw.lstrip().startswith("["):
@@ -840,7 +870,7 @@ async def chat(
             research_unavailable = True
 
         # Persist assistant response
-        assistant_content = [block.model_dump() for block in response.content]
+        assistant_content = _for_this_turn([block.model_dump() for block in response.content])
         await _persist_message(db, conversation_id, "assistant", assistant_content)
 
         await _record_turn_usage(db, response, actor=usage_actor)
