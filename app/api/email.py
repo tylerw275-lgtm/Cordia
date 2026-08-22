@@ -144,5 +144,11 @@ async def receive_email(request: Request, db: AsyncSession = Depends(get_db)) ->
     except Exception as e:
         logger.error(f"Error processing inbound email: {e}", exc_info=True)
         status = f"error:{type(e).__name__}"
+        # Only logged until now — and inbound email is precisely the path that
+        # was broken for days without anyone noticing.
+        from app.services import usage_service
+        await usage_service.record_error(
+            "email_inbound", e, actor=sender, message=body,
+        )
 
     return JSONResponse(status_code=200, content={"status": status})

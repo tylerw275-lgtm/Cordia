@@ -40,7 +40,7 @@ Last updated: June 2026</p>
 <p>Reply <strong>STOP</strong> to any message to unsubscribe immediately. No further messages will be sent after opting out.</p>
 
 <h2>Contact</h2>
-<p>AI-Gen Partners (Marq LLC) — <a href="mailto:tyler@aigenpartners.com">tyler@aigenpartners.com</a></p>
+<p>AI-Gen Partners (Marq LLC) — <a href="mailto:tyler@ai-genpartners.com">tyler@ai-genpartners.com</a></p>
 </body>
 </html>"""
 
@@ -73,7 +73,7 @@ Last updated: June 2026</p>
 <p>This service is provided for informational and personal assistance purposes. For legal, medical, or financial decisions, always consult a qualified professional.</p>
 
 <h2>Contact</h2>
-<p><a href="mailto:tyler@aigenpartners.com">tyler@aigenpartners.com</a></p>
+<p><a href="mailto:tyler@ai-genpartners.com">tyler@ai-genpartners.com</a></p>
 </body>
 </html>"""
 
@@ -94,7 +94,7 @@ _OPT_IN = """<!DOCTYPE html>
 builds and operates Cordia AI, a hosted AI personal-assistant software application, as its own
 direct offering. All messages in this program are generated and sent by that application on
 behalf of Marq LLC — never on behalf of any other business. Contact:
-<a href="mailto:tyler@aigenpartners.com">tyler@aigenpartners.com</a>.</p>
+<a href="mailto:tyler@ai-genpartners.com">tyler@ai-genpartners.com</a>.</p>
 
 <h2>What this program is</h2>
 <p>Cordia AI is a private SMS personal assistant operated by AI-Gen Partners and provided
@@ -131,7 +131,7 @@ shared with any third parties under any circumstances.</p>
 <h2>Opt-out & help</h2>
 <table>
 <tr><td><strong>STOP</strong></td><td>Reply STOP (or OPTOUT, UNSUBSCRIBE, CANCEL, END, QUIT) at any time to unsubscribe. You will receive one confirmation and no further messages.</td></tr>
-<tr><td><strong>HELP</strong></td><td>Reply HELP or INFO for support, or email tyler@aigenpartners.com.</td></tr>
+<tr><td><strong>HELP</strong></td><td>Reply HELP or INFO for support, or email tyler@ai-genpartners.com.</td></tr>
 <tr><td><strong>Rates</strong></td><td>Message &amp; data rates may apply.</td></tr>
 </table>
 
@@ -243,7 +243,7 @@ _CONSENT_THANKS = f"""<!DOCTYPE html>
 <strong>+1 (629) 225-9067</strong>, from the mobile phone you listed, and you'll receive a
 confirmation message completing your enrollment.</p>
 <p class="note">Reply STOP at any time to unsubscribe, or HELP for assistance.
-Message &amp; data rates may apply. Questions: tyler@aigenpartners.com</p>
+Message &amp; data rates may apply. Questions: tyler@ai-genpartners.com</p>
 </div>
 <p style="margin-top:1.6rem"><a href="/opt-in">SMS Program Disclosure</a> &nbsp;|&nbsp;
 <a href="/privacy">Privacy Policy</a> &nbsp;|&nbsp; <a href="/terms">Terms of Service</a></p>
@@ -270,7 +270,7 @@ completed. You&rsquo;ll receive a confirmation text at the number you provided o
 that&rsquo;s done. If you were not expecting this, no further action is needed and you
 will not be messaged.</p>
 <p class="note">Reply STOP at any time to unsubscribe, or HELP for assistance.
-Message &amp; data rates may apply. Questions: tyler@aigenpartners.com</p>
+Message &amp; data rates may apply. Questions: tyler@ai-genpartners.com</p>
 </div>
 <p style="margin-top:1.6rem"><a href="/opt-in">SMS Program Disclosure</a> &nbsp;|&nbsp;
 <a href="/privacy">Privacy Policy</a> &nbsp;|&nbsp; <a href="/terms">Terms of Service</a></p>
