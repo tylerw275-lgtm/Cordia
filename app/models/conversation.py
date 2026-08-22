@@ -16,6 +16,22 @@ class Conversation(Base):
     # address when a member has no phone on file.
     phone_number: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # What this conversation amounted to before summary_through. History is a
+    # window and a trip planned across a year outlives any window, so once
+    # messages are old enough they stop being replayed and are represented by
+    # this instead.
+    #
+    # The rows they came from are never deleted. A summary that lost something
+    # can be rebuilt; deleted history cannot. summary_through is the watermark:
+    # the newest message the summary covers, advanced only after one is stored.
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summary_through: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    summarised_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

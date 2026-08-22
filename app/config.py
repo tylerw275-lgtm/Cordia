@@ -202,6 +202,16 @@ class Settings(BaseSettings):
     # bulk; this bounds what is left.
     inbound_email_max_chars: int = 12_000
 
+    # Condensing a conversation once it is old enough that replaying it costs
+    # more than it is worth. The originals are never deleted, so these are
+    # about what gets REPLAYED, not what is kept.
+    history_summary_after_days: int = 7
+    # Below this there is nothing worth a model call.
+    history_summary_min_messages: int = 6
+    # It rides in every request, so it must not become the bloat it removes.
+    history_summary_max_chars: int = 4_000
+    history_summary_hour: int = 3      # local, in the scheduler's timezone
+
     # Keeping track of what a group still has to do before a trip. Anything
     # outstanding surfaces in the morning brief, which goes to Cordia and to
     # nobody else. Cord never chases the assignee: the family did not sign up to

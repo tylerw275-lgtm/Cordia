@@ -212,6 +212,7 @@ async def _load_history(
     conversation_id: uuid.UUID,
     limit: int | None = None,
     max_chars: int | None = None,
+    since: Any = None,
 ) -> list[dict]:
     """Rebuild the conversation as a valid Messages API transcript.
 
@@ -227,12 +228,15 @@ async def _load_history(
     limit = settings.history_max_rows if limit is None else limit
     max_chars = settings.history_max_chars if max_chars is None else max_chars
 
-    result = await db.execute(
-        select(Message)
-        .where(Message.conversation_id == conversation_id)
-        .order_by(Message.created_at.desc())
-        .limit(limit)
-    )
+    stmt = select(Message).where(Message.conversation_id == conversation_id)
+    if since is not None:
+        # Everything at or before this is represented by the conversation's
+        # summary instead. The rows are still there; they are simply not
+        # replayed. Cutting on a timestamp can split a tool_use from its
+        # result — _sanitize_history drops the orphan, which is why the cut is
+        # safe to make here.
+        stmt = stmt.where(Message.created_at > since)
+    result = await db.execute(stmt.order_by(Message.created_at.desc()).limit(limit))
     messages = list(reversed(result.scalars().all()))
     turns: list[dict] = []
     for msg in messages:
@@ -602,8 +606,20 @@ async def chat(
     if profile.prompting_notes:
         system.append({"type": "text", "text": "\n" + profile.prompting_notes})
 
-    # Load conversation history
-    history = await _load_history(db, conversation_id)
+    # Load conversation history, minus anything the summary already covers.
+    conversation = (await db.execute(
+        select(Conversation).where(Conversation.id == conversation_id)
+    )).scalars().first()
+    history = await _load_history(
+        db, conversation_id, since=getattr(conversation, "summary_through", None)
+    )
+    if conversation is not None and getattr(conversation, "summary", None):
+        from app.services import history_summary
+        block = history_summary.for_prompt(conversation)
+        if block:
+            # After the cache breakpoint, with the other volatile blocks: it
+            # changes at most once a day and is small.
+            system.append({"type": "text", "text": block})
 
     # Build this turn's content. Images (from MMS) ride alongside any caption.
     if images:
