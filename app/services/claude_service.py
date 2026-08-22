@@ -267,6 +267,51 @@ async def _persist_message(
     await db.commit()
 
 
+# Below this a cache breakpoint does nothing: the API will not cache a prefix
+# under roughly 1,024 tokens, and marking one anyway just spends a breakpoint.
+_MIN_CACHEABLE_HISTORY_CHARS = 5_000
+
+
+def _cache_history(history: list[dict]) -> list[dict]:
+    """Mark the end of the replayed transcript so it is not re-billed every round.
+
+    The only breakpoint before this sat on the last system block, which covers
+    the tool schemas and the system prompt and nothing after — so every replayed
+    message was charged at full rate on every request.
+
+    The saving per month is modest. The saving *inside a turn* is not: a deep
+    research turn runs up to 25 tool rounds and re-sends the whole transcript on
+    each one, so rounds 2 onward now read it at a tenth of the price instead of
+    paying in full twenty-four more times.
+
+    The breakpoint goes on the last history message, never on this turn's new
+    one — the prefix has to be identical across requests to hit, and the new
+    message is the part that changes.
+    """
+    if not history:
+        return history
+    if sum(_turn_chars(turn) for turn in history) < _MIN_CACHEABLE_HISTORY_CHARS:
+        return history
+
+    # Copy rather than mutate: history is built fresh each turn, but a caller
+    # holding a reference should not find a breakpoint appearing in it.
+    marked = list(history)
+    last = dict(marked[-1])
+    content = last["content"]
+    if isinstance(content, str):
+        # A plain-text turn has no block to attach to. cache_control lives on a
+        # block, so give it one.
+        content = [{"type": "text", "text": content}]
+    else:
+        content = [dict(block) for block in content]
+    if not content:
+        return history
+    content[-1]["cache_control"] = {"type": "ephemeral"}
+    last["content"] = content
+    marked[-1] = last
+    return marked
+
+
 _TOO_LONG_NUDGE = (
     "Your last response was cut off — it hit the output limit, so anything you "
     "were part-way through never happened. If that was a tool call, it did not "
@@ -744,7 +789,7 @@ async def chat(
         or (settings.cordia_phone_number if sender_role == "owner" else None)
     )
 
-    messages = history + [{"role": "user", "content": user_content}]
+    messages = _cache_history(history) + [{"role": "user", "content": user_content}]
     web_tools = _web_tools(sender_role, profile)
     tools = list(get_tool_schemas(sender_role)) + web_tools
 
