@@ -247,6 +247,40 @@ async def add_principal(
     return RedirectResponse(url=f"/health/dashboard?added={outcome}", status_code=303)
 
 
+@router.post("/principals/edit", include_in_schema=False)
+async def edit_principal(
+    request: Request,
+    user_id: str = Form(...),
+    name: str = Form(""),
+    phone: str = Form(""),
+    email: str = Form(""),
+):
+    """Change a principal's name or how they are reached.
+
+    Adding and removing were possible; changing was not — so a mistyped number
+    or a new address meant adding a second row, which splits that person's
+    conversation history in two. It also mattered for the account holder: her
+    contact details are the deployment's configuration, and until this existed
+    the only way to correct them was an env var and a redeploy.
+    """
+    if not _authorized(request):
+        return HTMLResponse(_LOGIN_PAGE.format(style=_STYLE, error=""), status_code=401)
+
+    import uuid as _uuid
+
+    from app.database import get_db_session
+    from app.services import principal_service
+    outcome = "error"
+    try:
+        async with get_db_session() as db:
+            _, outcome = await principal_service.update_principal(
+                db, _uuid.UUID(user_id), name=name, phone=phone, email=email,
+            )
+    except Exception as e:
+        logger.error(f"Could not update principal: {e}")
+    return RedirectResponse(url=f"/health/dashboard?edited={outcome}", status_code=303)
+
+
 @router.post("/principals/deactivate", include_in_schema=False)
 async def deactivate_principal(request: Request, user_id: str = Form(...)):
     if not _authorized(request):
@@ -271,6 +305,18 @@ _ADD_PRINCIPAL_FORM = """<form method="post" action="/health/principals/add" cla
 <button type="submit">Add</button>
 </form>"""
 
+
+_EDIT_OUTCOMES = {
+    "updated": '<div class="note ok-note">Saved.</div>',
+    "no_contact_route": ('<div class="note bad-note">A principal needs a mobile or an email '
+                         '&mdash; without one they cannot be recognised when they write in, '
+                         'or reached at all.</div>'),
+    "already_taken": ('<div class="note bad-note">Somebody else already uses that number or '
+                      'address. Two principals sharing one would make inbound messages '
+                      'resolve to whichever came first.</div>'),
+    "unknown_principal": '<div class="note bad-note">That person is no longer on file.</div>',
+    "error": '<div class="note bad-note">Could not save that &mdash; check the logs.</div>',
+}
 
 _ADD_OUTCOMES = {
     "added": ('<div class="note ok-note">Added. They can text or email Cord now &mdash; '
@@ -364,12 +410,39 @@ def _inbound_health_rows(health: dict | None) -> str:
     return "".join(rows)
 
 
+def _principal_actions(person) -> str:
+    """Edit for everyone, remove for everyone but the account holder.
+
+    The owner gets an edit form too, deliberately: handing the assistant over
+    means her details replace the tester's, and doing that only through an env
+    var and a redeploy is how the principal row ends up disagreeing with the
+    configuration.
+    """
+    edit = (
+        '<form method="post" action="/health/principals/edit" class="addform">'
+        f'<input type="hidden" name="user_id" value="{person.id}">'
+        f'<input type="text" name="name" value="{person.name}" maxlength="120">'
+        f'<input type="tel" name="phone" value="{person.phone or ""}" '
+        'placeholder="Mobile" maxlength="20">'
+        f'<input type="email" name="email" value="{person.email or ""}" '
+        'placeholder="Email" maxlength="255">'
+        '<button type="submit">Save</button></form>'
+    )
+    if person.is_owner:
+        return edit
+    return edit + (
+        '<form method="post" action="/health/principals/deactivate" class="decide">'
+        f'<input type="hidden" name="user_id" value="{person.id}">'
+        '<button class="btn-no">Remove</button></form>'
+    )
+
+
 def _row(label: str, value: str) -> str:
     return f'<div class="row"><span class="label">{label}</span><span class="val">{value}</span></div>'
 
 
 @router.get("/dashboard", include_in_schema=False)
-async def dashboard(request: Request, added: str = "") -> HTMLResponse:
+async def dashboard(request: Request, added: str = "", edited: str = "") -> HTMLResponse:
     if not _authorized(request):
         return HTMLResponse(_LOGIN_PAGE.format(style=_STYLE, error=""), status_code=401)
     from datetime import datetime, timezone
@@ -476,11 +549,7 @@ async def dashboard(request: Request, added: str = "") -> HTMLResponse:
                     "everything (hers)" if person.is_owner
                     else (", ".join(shared) if shared
                           else '<span class="pill off">nothing shared</span>'),
-                    "" if person.is_owner else (
-                        '<form method="post" action="/health/principals/deactivate" class="decide">'
-                        f'<input type="hidden" name="user_id" value="{person.id}">'
-                        '<button class="btn-no">Remove</button></form>'
-                    ),
+                    _principal_actions(person),
                 ))
             principal_config = principal_service.config_health()
     except Exception as e:
@@ -731,6 +800,7 @@ see what they send back — ask Cord to give them circle access.</div>
 {_table(principal_rows, ["Name", "Role", "Reaches Cord by", "Can see of Cordia's", ""],
         "Nobody is set up yet.")}
 {_ADD_OUTCOMES.get(added, "")}
+{_EDIT_OUTCOMES.get(edited, "")}
 {_ADD_PRINCIPAL_FORM}
 <div class="note"><strong>Add anyone who should get their own assistant</strong> &mdash;
 Tom, Karie, anyone else. A mobile number lets them text Cord; an email lets them
