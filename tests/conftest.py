@@ -85,6 +85,37 @@ async def db(_session_override):
 
 
 @pytest.fixture(autouse=True)
+def _stream_follows_create(monkeypatch):
+    """Make `messages.stream` delegate to whatever `messages.create` is.
+
+    Deep-work turns ask for 32,000 output tokens, and above ~16,000 the SDK
+    wants streaming or a slow generation hits the HTTP timeout — the same lost
+    turn this budget exists to prevent, arriving by another route. So the deep
+    path streams.
+
+    In production the two differ. In a test they should not: `get_final_message()`
+    returns the same Message object `create()` would, which is the whole reason
+    the loop can be indifferent to which ran. Rather than have twenty test files
+    each patch both, this makes a patched `create` cover both — so every existing
+    mock keeps testing the real path, whichever one the token budget selects.
+    """
+    import contextlib
+
+    from app.services import claude_service
+
+    @contextlib.asynccontextmanager
+    async def _stream(**kwargs):
+        class _Streamed:
+            async def get_final_message(self):
+                return await claude_service._client.messages.create(**kwargs)
+
+        yield _Streamed()
+
+    monkeypatch.setattr(claude_service._client.messages, "stream", _stream,
+                        raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _reset_inbound_state():
     """Clear the module-level caches the SMS webhook keeps between requests.
 

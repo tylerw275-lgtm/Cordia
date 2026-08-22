@@ -138,11 +138,28 @@ async def seed_principals(db: AsyncSession) -> int:
             ))
             added += 1
         else:
-            # Fill in gaps without clobbering anything already set by hand.
-            existing.phone = existing.phone or phone
-            existing.email = existing.email or email
+            # Gap-filling for everyone except the account holder.
+            #
+            # The owner is different because her contact details ARE the
+            # configuration: CORDIA_PHONE_NUMBER and OWNER_EMAIL are how the
+            # deployment says who it belongs to. Gap-filling those meant that
+            # handing the assistant to its actual owner - changing both
+            # variables - left the principal row pointing at whoever had been
+            # testing it. She would then miss the principal lookup entirely,
+            # fall through to the config fallback as an anonymous owner, and be
+            # shown every project and memory created before she arrived,
+            # because that path applies no visibility scoping.
             if entry.get("is_owner"):
                 existing.is_owner = True
+                if phone and normalize_phone(phone) != normalize_phone(existing.phone):
+                    logger.info("Owner phone changed in config; updating the principal row")
+                    existing.phone = phone
+                if email and email != normalize_email(existing.email):
+                    logger.info("Owner email changed in config; updating the principal row")
+                    existing.email = email
+            else:
+                existing.phone = existing.phone or phone
+                existing.email = existing.email or email
     await db.commit()
     if added:
         logger.info(f"Seeded {added} principal(s)")
@@ -193,6 +210,53 @@ async def add_principal(
     await db.refresh(user)
     logger.info(f"Added principal {user.name}")
     return user, "added"
+
+
+async def update_principal(
+    db: AsyncSession, user_id, *, name: str | None = None,
+    phone: str | None = None, email: str | None = None,
+) -> tuple[AuthorizedUser | None, str]:
+    """Change someone's name or how they are reached.
+
+    Adding and deactivating were possible; changing was not, so a mistyped
+    number or a new address meant a second row and a conversation split in two.
+
+    Never removes a principal's last contact route: a row with neither a phone
+    nor an email cannot be resolved from an inbound message or reached by one,
+    which looks fine on the page and does nothing at all.
+    """
+    user = (await db.execute(
+        select(AuthorizedUser).where(AuthorizedUser.id == user_id)
+    )).scalars().first()
+    if user is None:
+        return None, "unknown_principal"
+
+    new_name = (name or "").strip() or user.name
+    new_phone = (phone or "").strip() if phone is not None else user.phone
+    new_email = normalize_email(email) if email is not None else user.email
+    new_phone = new_phone or None
+    new_email = new_email or None
+
+    if not new_phone and not new_email:
+        return None, "no_contact_route"
+
+    clash = None
+    if new_phone and normalize_phone(new_phone) != normalize_phone(user.phone):
+        clash = await resolve_by_phone(db, new_phone)
+    if clash is None and new_email and new_email != normalize_email(user.email):
+        clash = await resolve_by_email(db, new_email)
+    if clash is not None and clash.id != user.id:
+        # Two principals sharing a route means inbound resolution picks one of
+        # them arbitrarily, which is worse than refusing the edit.
+        return None, "already_taken"
+
+    user.name = new_name[:120]
+    user.phone = new_phone
+    user.email = new_email
+    await db.commit()
+    await db.refresh(user)
+    logger.info(f"Updated principal {user.name}")
+    return user, "updated"
 
 
 async def set_active(db: AsyncSession, user_id, active: bool) -> bool:

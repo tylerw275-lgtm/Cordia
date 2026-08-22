@@ -62,6 +62,20 @@ _PROFILES: list[tuple[str, PromptProfile]] = [
     )),
     ("claude-opus-5", PromptProfile(
         family="frontier",
+        # Not the dataclass defaults. 8,192 output tokens is ~32,000 characters,
+        # which has to hold the model's reasoning AND the whole deliverable as a
+        # tool argument — a trip for three families does not fit, so it truncated
+        # mid-tool-call and the email was never sent. Opus 5 allows 128K; 32,000
+        # is generous for anything she asks for and still a small slice of it.
+        max_tokens=4_000,
+        deep_max_tokens=32_000,
+        # Thinking is ON by default on Opus 5 — sending a `thinking` param is
+        # unnecessary and `budget_tokens` / `temperature` are rejected outright.
+        # Effort is the dial instead.
+        #
+        # Low for ordinary texts, and not to save money: she is standing there
+        # having sent "what's on today", and less thinking is a faster reply.
+        normal_extras={"output_config": {"effort": "low"}},
         deep_extras={"output_config": {"effort": "high"}},
         prompting_notes=_MODERN_NOTES,
         web_search_version="web_search_20260209",
