@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.services import consent_service
+from app.utils.phone import to_e164
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -313,7 +314,10 @@ async def consent_form_submit(
             "and check the consent box.</p>",
         ), status_code=400)
 
-    normalized = f"+1{digits[-10:]}"
+    # The 10DLC campaign is US-only, so the form's own numbers are US numbers -
+    # but the formatter is shared so a number that arrives already carrying a
+    # country code is not rewritten into a different one.
+    normalized = to_e164(phone) or f"+1{digits[-10:]}"
     now = datetime.now(timezone.utc)
     # The table is created by migration 015, not lazily here. Creating it on
     # first submission meant every database where nobody had submitted the form

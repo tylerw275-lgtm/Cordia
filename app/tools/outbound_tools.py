@@ -14,11 +14,10 @@ import hmac
 import logging
 import secrets
 
-from app.utils.phone import normalize_phone
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.outbound import OutboundMessage

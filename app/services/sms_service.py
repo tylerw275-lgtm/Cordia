@@ -10,12 +10,10 @@ was recorded and then ignored while the scheduler kept texting.
 """
 import logging
 
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.services import twilio_service
-from app.utils.phone import normalize_phone
 
 logger = logging.getLogger(__name__)
 
@@ -33,18 +31,9 @@ async def is_opted_out(db: AsyncSession, phone: str) -> bool:
     Compares on the last 10 digits: consent rows are always +E164, but callers
     pass whatever format the record they're working from happens to hold.
     """
-    normalized = normalize_phone(phone)
-    if not normalized:
-        return False
-    result = await db.execute(
-        text(
-            "SELECT 1 FROM sms_consent "
-            "WHERE right(regexp_replace(phone, '[^0-9]', '', 'g'), 10) = :digits "
-            "AND opted_out_at IS NOT NULL"
-        ),
-        {"digits": normalized},
-    )
-    return result.first() is not None
+    from app.services import consent_service
+
+    return await consent_service.status_for(db, phone) == "opted_out"
 
 
 async def send_sms(to: str, body: str, force: bool = False) -> bool:

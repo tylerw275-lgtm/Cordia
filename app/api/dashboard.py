@@ -10,7 +10,6 @@ be traced back to a person, which defeats the purpose. The masking that matters
 is in the *tool results*, which reach the model: Cord still never sees a stored
 number, so it cannot repeat one into a text or an email.
 """
-import base64
 import hashlib
 import hmac
 import logging
@@ -449,8 +448,6 @@ async def dashboard(request: Request, added: str = "") -> HTMLResponse:
     usage_month = usage_all = credit = None
     failures = []
     try:
-        from datetime import timedelta
-
         from app.services import usage_service
         async with get_db_session() as db:
             month_start = datetime.now(timezone.utc).replace(

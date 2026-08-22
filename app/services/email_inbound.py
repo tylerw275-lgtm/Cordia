@@ -9,7 +9,7 @@ import re
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.services import claude_service, email_service, family_circle_service
+from app.services import claude_service, email_service
 
 logger = logging.getLogger(__name__)
 

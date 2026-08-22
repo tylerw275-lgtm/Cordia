@@ -6,16 +6,15 @@ address server-side (see outbound_tools), so contact details can't leak into
 conversation or message bodies.
 """
 import re
-import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.contact import Contact
 from app.models.family import FamilyMember
-from app.utils.phone import normalize_phone
+from app.utils.phone import normalize_phone, to_e164
 
 TOOL_SCHEMAS = [
     {
@@ -119,13 +118,10 @@ TOOL_SCHEMAS = [
 ]
 
 
-def _normalize_phone_e164(phone: str | None) -> str | None:
-    if not phone:
-        return None
-    digits = re.sub(r"\D", "", phone)
-    if len(digits) < 10:
-        return None
-    return f"+1{digits[-10:]}" if len(digits) <= 11 else f"+{digits}"
+# One formatter, in app/utils/phone. This module's own version mapped anything
+# up to eleven digits onto "+1" plus the last ten, so a vendor in Paris or a
+# guide in Arusha was silently rewritten into a US number that does not exist.
+_normalize_phone_e164 = to_e164
 
 
 async def get_contact_by_name(db: AsyncSession, name: str) -> Contact | None:
@@ -279,33 +275,20 @@ async def invite_to_sms_handler(db: AsyncSession, **kw) -> dict:
 
 
 async def _consent_by_phone(db: AsyncSession) -> dict[str, str]:
-    """Map of normalized phone -> 'consented' | 'opted_out' | 'awaiting_approval'
-    | 'rejected'.
+    """Normalized phone -> the roster bucket that number belongs in.
 
     Signing the form is not the same as being reachable. This used to read
     consented_at alone, so Cord told Cordia someone had consented and then
-    ask_family_member — which does check approval_status — refused to send.
-    One turn contradicting the next is worse than either answer alone.
+    ask_family_member — which does check approval_status — refused to send. One
+    turn contradicting the next is worse than either answer alone, so the status
+    now comes from consent_service rather than from a query written here.
     """
-    result = await db.execute(
-        text("SELECT phone, consented_at, opted_out_at, approval_status FROM sms_consent")
-    )
-    status: dict[str, str] = {}
-    for phone, consented_at, opted_out_at, approval in result.fetchall():
-        key = normalize_phone(phone)
-        if not key:
-            continue
-        if opted_out_at is not None:
-            status[key] = "opted_out"
-        elif consented_at is None:
-            continue
-        elif (approval or "pending") == "approved":
-            status[key] = "consented"
-        elif approval == "rejected":
-            status[key] = "rejected"
-        else:
-            status[key] = "awaiting_approval"
-    return status
+    from app.services import consent_service
+
+    buckets = {"approved": "consented", "opted_out": "opted_out",
+               "rejected": "rejected", "pending": "awaiting_approval"}
+    return {phone: buckets.get(status, "awaiting_approval")
+            for phone, status in (await consent_service.status_by_phone(db)).items()}
 
 
 async def list_sms_roster_handler(db: AsyncSession, **kw) -> dict:

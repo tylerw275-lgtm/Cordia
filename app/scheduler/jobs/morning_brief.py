@@ -2,7 +2,7 @@
 today's events, upcoming birthdays, flight price drops, and anything new from family.
 """
 import logging
-from datetime import date, timedelta
+from datetime import date
 
 from sqlalchemy import select
 

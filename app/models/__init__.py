@@ -15,7 +15,6 @@ from app.models.project import Project
 from app.models.real_estate import Lease, LeaseClause, LeaseReminder
 from app.models.usage import UsageEvent
 from app.models.trips import FlightWatch, PriceSnapshot, Trip
-from app.models.user import User
 
 __all__ = [
     "AccessGrant",
@@ -39,5 +38,4 @@ __all__ = [
     "Project",
     "Trip",
     "UsageEvent",
-    "User",
 ]

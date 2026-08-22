@@ -172,7 +172,7 @@ async def health_test_send(secret: str = "", to: str = "") -> dict:
     outcome. Requires the webhook secret; only sends to the configured owner
     or test number so it can't be abused as a sending relay."""
     import httpx
-    from app.services import signalhouse_service, sms_service
+    from app.services import signalhouse_service
     from app.utils.phone import phones_match
 
     if not settings.signalhouse_webhook_secret or secret != settings.signalhouse_webhook_secret:

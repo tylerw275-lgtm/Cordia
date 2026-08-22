@@ -5,11 +5,11 @@ import random
 from collections import OrderedDict
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Form, HTTPException, Request, Response
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db
+from app.utils.phone import to_e164
 from app.config import settings
 from app.services import (
     access, claude_service, consent_service, family_circle_service, sms_service, twilio_service,
@@ -204,10 +204,6 @@ async def _process_inbound_bg(from_number: str, body: str, media: list) -> None:
     _sweep_locks()
 
 
-# If a reply is still being composed after this many seconds, send a short
-# courtesy note so she isn't left wondering whether it landed.
-_SLOW_REPLY_SECONDS = 4.0
-
 # Every line here is plain ASCII, and that is a cost decision rather than a style
 # one: an em dash or a curly quote is non-GSM, which re-encodes the whole message
 # as UCS-2 and drops the segment limit from 160 characters to 70 — doubling the
@@ -290,17 +286,17 @@ async def _notify_if_slow(to: str, body: str = "") -> None:
     covering for is still on its way, and losing that to a courtesy note would
     be a bad trade.
     """
-    try:
-        for index, delay in enumerate(_NOTE_SCHEDULE):
-            await asyncio.sleep(delay)
-            try:
-                await sms_service.send_sms(
-                    to=to, body=_working_note(to, body, followup=index > 0)
-                )
-            except Exception as e:
-                logger.warning(f"Could not send slow-reply note: {e}")
-    except asyncio.CancelledError:
-        raise
+    for index, delay in enumerate(_NOTE_SCHEDULE):
+        await asyncio.sleep(delay)
+        try:
+            await sms_service.send_sms(
+                to=to, body=_working_note(to, body, followup=index > 0)
+            )
+        except Exception as e:
+            # Never `except Exception` around the sleep as well: cancellation is
+            # how the real reply stops these, and swallowing it would keep
+            # texting her after the answer had already landed.
+            logger.warning(f"Could not send slow-reply note: {e}")
 
 
 async def _failure_reply(db: AsyncSession, from_number: str) -> str:
@@ -518,10 +514,7 @@ async def receive_signalhouse_sms(request: Request, background: BackgroundTasks)
 
     # Normalize to +E164 so consent records match across providers
     # (Signal House uses digits-only like '16155551234'; Twilio used '+1615...')
-    from_number = str(from_number).strip()
-    if not from_number.startswith("+"):
-        digits = "".join(ch for ch in from_number if ch.isdigit())
-        from_number = f"+{digits}" if len(digits) > 10 else f"+1{digits}"
+    from_number = to_e164(str(from_number)) or str(from_number).strip()
 
     # Signal House retries on a slow response; ignore repeat deliveries
     msg_id = str(payload.get("identifier") or message.get("_id") or "")
