@@ -59,9 +59,15 @@ def sms_segments(body: str) -> int:
     """
     if not body:
         return 1
-    unicode_msg = any(ord(c) > 127 for c in body)
-    single, multi = (70, 67) if unicode_msg else (160, 153)
-    length = len(body)
+    from app.services.gsm import is_gsm, septets
+
+    # "Any character above ASCII" was wrong in both directions: £, é, Ö and ñ
+    # are all in the GSM alphabet and cost nothing extra, so a French or Spanish
+    # name was billed as though it had tripled the message.
+    if is_gsm(body):
+        single, multi, length = 160, 153, septets(body)
+    else:
+        single, multi, length = 70, 67, len(body)
     return 1 if length <= single else math.ceil(length / multi)
 
 

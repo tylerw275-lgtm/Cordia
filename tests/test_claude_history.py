@@ -156,15 +156,15 @@ def test_trim_cuts_only_at_a_plain_user_turn():
     turns = [_user("one"), _assistant_tool_use("tu_a"), _tool_result("tu_a"),
              {"role": "assistant", "content": [{"type": "text", "text": "done"}]},
              _user("two")]
-    out = claude_service._trim_to_turns(claude_service._sanitize_history(turns), max_turns=3)
-    # Cutting at index 2 would strand the tool_result, so it cuts at "two".
+    out = claude_service._trim_to_chars(claude_service._sanitize_history(turns), budget=20)
+    # Cutting mid-exchange would strand the tool_result, so it cuts at "two".
     assert out == [_user("two")]
     assert_valid_transcript(out)
 
 
 def test_trim_is_a_no_op_when_history_fits():
     turns = [_user("one"), {"role": "assistant", "content": [{"type": "text", "text": "hi"}]}]
-    assert claude_service._trim_to_turns(turns, max_turns=20) == turns
+    assert claude_service._trim_to_chars(turns, budget=48_000) == turns
 
 
 def test_user_turn_cannot_carry_a_tool_use_block():

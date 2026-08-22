@@ -117,24 +117,7 @@ def get_profile(model_id: str) -> PromptProfile:
     return _DEFAULT
 
 
-# Deep work = open-ended creative, planning, or research asks that deserve an
-# expert brief and a bigger token budget than a conversational SMS reply.
-_DEEP_WORK_KEYWORDS = (
-    "plan", "planning", "organize", "brainstorm", "ideas", "research",
-    "party", "event", "comedy", "dinner", "gala", "fundraiser", "host",
-    "celebration", "itinerary", "compare", "options", "recommend",
-    "write", "draft", "prepare", "help me with", "put together",
-    # Procurement and setup asks deserve the same depth: "what should I pack
-    # for the Naples house" and "find me a car service" both need an interview
-    # and real research, and neither matched anything above.
-    "pack", "packing", "move", "moving", "furnish", "outfit", "set up",
-    "book", "booking", "hire", "quote", "price", "pricing", "cost",
-    "find me", "look up", "search for", "shop", "vendor", "service",
-)
-
-
-def is_deep_work(message: str, context_hint: str | None = None) -> bool:
-    if context_hint in ("trip_planning", "event_planning"):
-        return True
-    lower = (message or "").lower()
-    return any(kw in lower for kw in _DEEP_WORK_KEYWORDS)
+# Deep work — whether an ask deserves an expert brief and a bigger token budget
+# than a conversational SMS reply — is decided by the one intent table, so the
+# budget cannot disagree with the brief that was injected alongside it.
+from app.prompts.intent import is_deep_work  # noqa: E402,F401

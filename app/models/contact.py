@@ -20,7 +20,6 @@ class Contact(Base):
     name: Mapped[str] = mapped_column(String(150), nullable=False)
     email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    whatsapp: Mapped[str | None] = mapped_column(String(20), nullable=True)
     relationship: Mapped[str | None] = mapped_column(String(100), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Group labels, e.g. ['st-thomas-2026', 'naples-house']

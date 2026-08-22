@@ -1,4 +1,5 @@
 import logging
+import os
 from contextlib import asynccontextmanager
 
 import structlog
@@ -102,8 +103,35 @@ async def _bootstrap_principals() -> None:
         logger.error("principals_bootstrap_failed", error=str(e), error_type=type(e).__name__)
 
 
+def _assert_single_worker() -> None:
+    """Refuse to start multi-process, because the failure would be silent.
+
+    Message deduplication, per-conversation turn serialisation and message
+    batching all live in module-level dicts (app/services/turn_queue). With one
+    worker that is correct and cheap. With two, each process gets its own copy:
+    a retried webhook is no longer recognised as a duplicate, two of Cordia's
+    texts can be answered by different processes at once, and messages stop
+    folding into one turn. Nothing errors — the assistant just quietly goes back
+    to the behaviour she already complained about.
+
+    So the assumption is checked rather than written down. The scheduler is the
+    second reason: two workers means two schedulers, and the morning brief
+    arrives twice.
+    """
+    for var in ("WEB_CONCURRENCY", "UVICORN_WORKERS", "GUNICORN_WORKERS"):
+        raw = os.environ.get(var)
+        if raw and raw.strip().isdigit() and int(raw) > 1:
+            raise RuntimeError(
+                f"{var}={raw} would start {raw} workers. Cordia keeps inbound "
+                "deduplication, conversation locking and the scheduler in "
+                "process memory, so it must run as a single worker. Scale with "
+                "a bigger instance, or move turn_queue to Redis/Postgres first."
+            )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _assert_single_worker()
     logger.info("Cordia starting up", model=settings.claude_model)
     # Log the capability surface at boot, so a version or flag mismatch is
     # visible in the first lines of a deploy rather than at the first text.
@@ -172,7 +200,7 @@ async def health_test_send(secret: str = "", to: str = "") -> dict:
     outcome. Requires the webhook secret; only sends to the configured owner
     or test number so it can't be abused as a sending relay."""
     import httpx
-    from app.services import signalhouse_service, sms_service
+    from app.services import signalhouse_service
     from app.utils.phone import phones_match
 
     if not settings.signalhouse_webhook_secret or secret != settings.signalhouse_webhook_secret:

@@ -19,6 +19,8 @@ from app.prompts import playbooks
 
 logger = logging.getLogger(__name__)
 
+from app.tools.actor import wants_actor
+
 
 TOOL_SCHEMAS = [
     {
@@ -490,7 +492,7 @@ async def deliver_project_handler(db: AsyncSession, **kw) -> dict:
     }
 
 
-HANDLERS = {
+HANDLERS = wants_actor({
     "start_project": start_project_handler,
     "save_project_questions": save_project_questions_handler,
     "save_project_answers": save_project_answers_handler,
@@ -499,4 +501,4 @@ HANDLERS = {
     "save_project_findings": save_project_findings_handler,
     "save_quote_options": save_quote_options_handler,
     "deliver_project": deliver_project_handler,
-}
+})

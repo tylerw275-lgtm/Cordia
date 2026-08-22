@@ -269,9 +269,7 @@ async def ask_family_member_handler(db: AsyncSession, **kw) -> dict:
     and circle access (an app permission she controls) are different things
     with different fixes.
     """
-    from sqlalchemy import text as sql_text
     from app.services import sms_service
-    from app.utils.phone import normalize_phone
 
     member = await family_service.get_family_member_by_name(db, kw["name"])
     if not member:
@@ -284,19 +282,12 @@ async def ask_family_member_handler(db: AsyncSession, **kw) -> dict:
                             "was sent. Ask Cordia for it. Do NOT say they haven't consented — "
                             "that isn't what's missing.")}
 
-    digits = normalize_phone(member.phone)
-    row = (await db.execute(
-        sql_text(
-            "SELECT opted_out_at IS NOT NULL AS opted_out, approval_status "
-            "FROM sms_consent "
-            "WHERE right(regexp_replace(phone, '[^0-9]', '', 'g'), 10) = :digits "
-            "AND consented_at IS NOT NULL"
-        ),
-        {"digits": digits},
-    )).first()
-    consented = row is not None and not row.opted_out
-    opted_out = row is not None and row.opted_out
-    approval = (row.approval_status if row is not None else None) or "pending"
+    from app.services import consent_service
+
+    status = await consent_service.status_for(db, member.phone)
+    consented = status not in ("no_consent", "opted_out")
+    opted_out = status == "opted_out"
+    approval = status if status in ("approved", "rejected", "pending") else "pending"
 
     if opted_out:
         return {"sent": False, "reason": "opted_out",

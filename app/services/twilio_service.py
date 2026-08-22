@@ -2,7 +2,6 @@ import base64
 import hashlib
 import hmac
 import logging
-from urllib.parse import urlencode
 
 import httpx
 from fastapi import HTTPException, Request

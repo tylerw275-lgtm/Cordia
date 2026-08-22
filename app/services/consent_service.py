@@ -53,6 +53,29 @@ async def status_for(db: AsyncSession, phone: str) -> str:
     return row.approval_status or "pending"
 
 
+async def status_by_phone(db: AsyncSession) -> dict[str, str]:
+    """Every number's status at once, keyed by its last 10 digits.
+
+    The bulk form of `status_for`, for callers listing a roster. It exists so
+    that a listing and a send gate cannot disagree: `list_sms_roster` used to
+    write its own query, left out approval_status, and announced people as
+    consented that `ask_family_member` then refused to text.
+    """
+    rows = (await db.execute(text(
+        "SELECT phone, consented_at, opted_out_at, approval_status FROM sms_consent"
+    ))).fetchall()
+    out: dict[str, str] = {}
+    for row in rows:
+        digits = normalize_phone(row.phone)
+        if not digits or row.consented_at is None:
+            continue
+        if row.opted_out_at is not None:
+            out[digits] = "opted_out"
+        else:
+            out[digits] = row.approval_status or "pending"
+    return out
+
+
 async def list_pending(db: AsyncSession) -> list[dict]:
     """Everyone waiting on Cordia's decision, with the name they typed on the
     form so she can recognise them."""

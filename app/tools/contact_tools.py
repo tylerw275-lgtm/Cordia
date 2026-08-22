@@ -6,16 +6,15 @@ address server-side (see outbound_tools), so contact details can't leak into
 conversation or message bodies.
 """
 import re
-import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.contact import Contact
 from app.models.family import FamilyMember
-from app.utils.phone import normalize_phone
+from app.utils.phone import normalize_phone, to_e164
 
 TOOL_SCHEMAS = [
     {
@@ -84,9 +83,12 @@ TOOL_SCHEMAS = [
     {
         "name": "list_sms_roster",
         "description": (
-            "Cordia's growing SMS circle: who has consented and can be texted, who's been "
-            "invited but hasn't signed the consent form yet (worth a nudge from her), who "
-            "opted out, and who has a phone on file but no invite yet. Names only — never "
+            "Cordia's growing SMS circle: who is approved and can actually be texted, who has "
+            "signed the form but is still waiting on her approval, who was invited but hasn't "
+            "signed yet, who opted out, and who has a phone on file but no invite. Signing "
+            "the form is NOT the same as being reachable — only the approved list can be "
+            "texted, so never call someone consented on the strength of a signature alone. "
+            "Names only — never "
             "numbers. ALWAYS call this fresh when she asks who has consented — people sign "
             "the form between conversations, so an answer you gave earlier is probably out "
             "of date. Never repeat a previous answer without re-checking."
@@ -116,13 +118,10 @@ TOOL_SCHEMAS = [
 ]
 
 
-def _normalize_phone_e164(phone: str | None) -> str | None:
-    if not phone:
-        return None
-    digits = re.sub(r"\D", "", phone)
-    if len(digits) < 10:
-        return None
-    return f"+1{digits[-10:]}" if len(digits) <= 11 else f"+{digits}"
+# One formatter, in app/utils/phone. This module's own version mapped anything
+# up to eleven digits onto "+1" plus the last ten, so a vendor in Paris or a
+# guide in Arusha was silently rewritten into a US number that does not exist.
+_normalize_phone_e164 = to_e164
 
 
 async def get_contact_by_name(db: AsyncSession, name: str) -> Contact | None:
@@ -276,57 +275,63 @@ async def invite_to_sms_handler(db: AsyncSession, **kw) -> dict:
 
 
 async def _consent_by_phone(db: AsyncSession) -> dict[str, str]:
-    """Map of normalized phone -> 'consented' | 'opted_out'."""
-    result = await db.execute(text("SELECT phone, consented_at, opted_out_at FROM sms_consent"))
-    status: dict[str, str] = {}
-    for phone, consented_at, opted_out_at in result.fetchall():
-        key = normalize_phone(phone)
-        if not key:
-            continue
-        if opted_out_at is not None:
-            status[key] = "opted_out"
-        elif consented_at is not None:
-            status[key] = "consented"
-    return status
+    """Normalized phone -> the roster bucket that number belongs in.
+
+    Signing the form is not the same as being reachable. This used to read
+    consented_at alone, so Cord told Cordia someone had consented and then
+    ask_family_member — which does check approval_status — refused to send. One
+    turn contradicting the next is worse than either answer alone, so the status
+    now comes from consent_service rather than from a query written here.
+    """
+    from app.services import consent_service
+
+    buckets = {"approved": "consented", "opted_out": "opted_out",
+               "rejected": "rejected", "pending": "awaiting_approval"}
+    return {phone: buckets.get(status, "awaiting_approval")
+            for phone, status in (await consent_service.status_by_phone(db)).items()}
 
 
 async def list_sms_roster_handler(db: AsyncSession, **kw) -> dict:
     consent = await _consent_by_phone(db)
-    roster = {"consented": [], "invited_pending": [], "opted_out": [], "not_invited": []}
+    roster = {"consented": [], "awaiting_cordias_approval": [], "invited_pending": [],
+              "opted_out": [], "rejected": [], "not_invited": []}
     seen: set[str] = set()
+
+    def place(name: str, state: str | None, invited: bool, has_phone: bool) -> None:
+        if state == "consented":
+            roster["consented"].append(name)
+        elif state == "awaiting_approval":
+            roster["awaiting_cordias_approval"].append(name)
+        elif state == "opted_out":
+            roster["opted_out"].append(name)
+        elif state == "rejected":
+            roster["rejected"].append(name)
+        elif invited:
+            roster["invited_pending"].append(name)
+        elif has_phone:
+            roster["not_invited"].append(name)
 
     contacts = (await db.execute(select(Contact).order_by(Contact.name))).scalars().all()
     for c in contacts:
         key = normalize_phone(c.phone)
-        state = consent.get(key) if key else None
         seen.add(c.name.strip().lower())
-        if state == "consented":
-            roster["consented"].append(c.name)
-        elif state == "opted_out":
-            roster["opted_out"].append(c.name)
-        elif c.sms_invited_at is not None:
-            roster["invited_pending"].append(c.name)
-        elif key:
-            roster["not_invited"].append(c.name)
+        place(c.name, consent.get(key) if key else None, c.sms_invited_at is not None, bool(key))
 
     members = (await db.execute(select(FamilyMember).where(FamilyMember.phone.isnot(None)))).scalars().all()
     for m in members:
         if m.name.strip().lower() in seen:
             continue
-        state = consent.get(normalize_phone(m.phone))
-        if state == "consented":
-            roster["consented"].append(m.name)
-        elif state == "opted_out":
-            roster["opted_out"].append(m.name)
-        else:
-            roster["not_invited"].append(m.name)
+        place(m.name, consent.get(normalize_phone(m.phone)), False, True)
 
     return {
         **roster,
         "counts": {k: len(v) for k, v in roster.items()},
         "hint": (
-            "invited_pending haven't signed the consent form yet — suggest Cordia nudge them "
-            "personally. not_invited have a phone on file but no invite; offer invite_to_sms."
+            "Only the people in consented can actually be texted. "
+            "awaiting_cordias_approval have signed the form but Cordia has not let them in yet "
+            "— say that plainly rather than calling them consented, and offer to approve them. "
+            "invited_pending haven't signed the form yet — suggest she nudge them personally. "
+            "not_invited have a phone on file but no invite; offer invite_to_sms."
         ),
     }
 

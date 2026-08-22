@@ -9,7 +9,7 @@ import re
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.services import claude_service, email_service, family_circle_service
+from app.services import claude_service, email_service, turn_queue
 
 logger = logging.getLogger(__name__)
 
@@ -90,19 +90,29 @@ async def _resolve_trusted_contact(db: AsyncSession, sender: str):
 
 
 async def _resolve_sender(db: AsyncSession, sender: str):
-    """Return (role, member, conversation_key)."""
-    # Karie works mostly by email, so this path matters as much as the SMS one.
-    from app.services import principal_service
-    principal = await principal_service.resolve_by_email(db, sender)
-    if principal is not None:
-        # Key the thread on the address they wrote from, so each principal has
-        # their own conversation rather than sharing Cordia's.
-        return "owner", principal, sender
-    if settings.owner_email and sender == settings.owner_email.strip().lower():
+    """Return (role, member, conversation_key), for the email channel.
+
+    The access decision itself lives in `access.resolve`, shared with SMS —
+    roles included, so 'unapproved' means the same thing on both. What is
+    email-specific is the trusted-contact capture path and the conversation key.
+    """
+    from app.services import access
+
+    who = await access.resolve(db, email=sender)
+    if who.role == "owner":
+        if who.principal is not None:
+            # Key the thread on the address they wrote from, so each principal
+            # has their own conversation rather than sharing Cordia's.
+            return "owner", who.principal, sender
         return "owner", None, (settings.cordia_phone_number or settings.owner_email)
-    member = await family_circle_service.resolve_member_by_email(db, sender)
-    if member and member.has_circle_access:
-        return "family", member, (member.phone or sender)
+    if who.role == "opted_out":
+        # STOP ends the SMS program, not every channel — and they are the one
+        # who just wrote in. Answering the email they sent is not a message they
+        # did not ask for. Cord still cannot text them; send_sms enforces that.
+        return "family", who.member, (getattr(who.member, "phone", None) or sender)
+    if who.role in ("family", "unapproved"):
+        return who.role, who.member, (getattr(who.member, "phone", None) or sender)
+
     contact = await _resolve_trusted_contact(db, sender)
     if contact:
         # A thread of its own: third-party content must not accumulate in
@@ -154,6 +164,14 @@ async def process_inbound_email(db: AsyncSession, sender: str, subject: str, bod
         return "ignored_empty_body"
 
     role, member, conv_key = await _resolve_sender(db, sender)
+    if role == "unapproved":
+        # Silence rather than an explanation, for the same reason as SMS: a
+        # reply would confirm the roster to whoever is probing it.
+        logger.warning(
+            f"Email from {_mask(sender)} ({member.name}) — on the roster but not "
+            "approved by Cordia; ignored"
+        )
+        return "ignored_unapproved_sender"
     if role == "unknown":
         logger.warning(
             f"Inbound email from unknown sender {_mask(sender)} — ignored. "
@@ -162,6 +180,18 @@ async def process_inbound_email(db: AsyncSession, sender: str, subject: str, bod
         return "ignored_unknown_sender"
 
     logger.info(f"Inbound email from {_mask(sender)} (role={role}): {subject[:50]}")
+
+    # Take the conversation's turn, the same one SMS takes. A principal's email
+    # thread and their text thread are frequently the SAME conversation — Cordia's
+    # inbound mail keys on her phone number — so without this a text and an email
+    # arriving together produced two turns racing each other, which is the bug she
+    # already reported once on SMS alone.
+    async with turn_queue.lock_for(conv_key):
+        return await _reply(db, sender, subject, body, role, member, conv_key)
+
+
+async def _reply(db: AsyncSession, sender: str, subject: str, body: str,
+                 role: str, member, conv_key: str) -> str:
     from app.services import usage_service
     await usage_service.record_email(sender, outbound=False)
     conversation = await claude_service.get_or_create_conversation(db, conv_key)

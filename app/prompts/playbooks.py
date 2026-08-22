@@ -197,31 +197,20 @@ PLAYBOOKS: dict[str, dict] = {
 }
 
 
-# Rough routing only. A miss costs nothing — the derived-question path handles
-# anything unmatched and is the normal case, not the exception.
-_MATCH_HINTS: list[tuple[str, tuple[str, ...]]] = [
-    ("place_setup", (
-        "pack", "packing", "furnish", "outfit", "move in", "moving in", "set up the",
-        "setting up the", "second home", "new house", "new home", "what do i need for the",
-    )),
-    ("service_sourcing", (
-        "car service", "book a", "booking a", "hire", "find me a", "quote", "cheapest",
-        "best price", "price out", "driver", "limo", "caterer", "cleaner", "contractor",
-    )),
-    ("event_planning", (
-        "party", "dinner party", "event", "gala", "fundraiser", "celebration", "reception",
-        "comedy night", "host a", "hosting a", "shower", "reunion",
-    )),
-]
-
-
 def match(request: str) -> str | None:
-    """Best-guess family for a request, or None to derive an interview."""
-    low = (request or "").lower()
-    for kind, hints in _MATCH_HINTS:
-        if any(h in low for h in hints):
-            return kind
-    return None
+    """Best-guess family for a request, or None to derive an interview.
+
+    Routing lives in `intent`, with the module briefs and the token budget, so a
+    request cannot be an event to one table and something else to another. That
+    split was real: the event-planning brief said "Build the full plan, not
+    tips" while this playbook said "Do NOT answer the request yet", and both
+    could reach the model in the same turn.
+
+    A miss costs nothing — the derived-question path handles anything unmatched
+    and is the normal case, not the exception.
+    """
+    from app.prompts.intent import playbook_for
+    return playbook_for(request)
 
 
 def get(kind: str | None) -> dict | None:

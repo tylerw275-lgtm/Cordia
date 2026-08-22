@@ -12,9 +12,13 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     claude_model: str = "claude-sonnet-4-6"
 
-    # Active SMS provider: "twilio" or "signalhouse". Everything above the
+    # Active SMS provider: "signalhouse" or "twilio". Everything above the
     # send/receive layer (consent, keywords, drafting) is provider-agnostic.
-    sms_provider: str = "twilio"
+    # The default is what actually runs: the 10DLC campaign and the number live
+    # at Signal House. It defaulted to twilio, so production was correct only
+    # because an env var overrode it — losing that variable would have sent
+    # every message to a provider with no credentials.
+    sms_provider: str = "signalhouse"
 
     # Signal House (10DLC campaign + number live here)
     signalhouse_api_key: str = ""
@@ -38,6 +42,11 @@ class Settings(BaseSettings):
 
     duffel_access_token: str = ""
     duffel_webhook_secret: str = ""  # from the Duffel dashboard webhook config
+    # How stale a Duffel webhook may be before it is refused. The signature
+    # covers a timestamp precisely so a captured delivery cannot be replayed
+    # forever: order.created is idempotent, but a replayed schedule-change event
+    # would text Cordia about the same flight change over and over.
+    duffel_webhook_max_age_seconds: int = 300
     enable_flight_booking: bool = False  # Duffel Links hosted checkout (off until tested)
 
     # Email (independent of Crown Bakeries — dedicated assistant identity)
@@ -145,6 +154,38 @@ class Settings(BaseSettings):
     enable_web_research: bool = True
     web_search_max_uses: int = 8
     web_fetch_max_uses: int = 5
+
+    # How many tool rounds one turn may take. Each round is one API request, so
+    # this is the ceiling on both the answer's depth and its cost.
+    #
+    # It was 10, hardcoded, and sequential work spends one per round: a trip
+    # that prices flights, then lodging, then visas, then vaccinations, then a
+    # guide is 15-20. On exhaustion the turn was thrown away and she was told to
+    # rephrase, having already paid for every round. Deep work gets the larger
+    # budget because that is exactly the ask that needs it.
+    max_tool_iterations: int = 12
+    max_tool_iterations_deep: int = 25
+
+    # How much conversation to replay. The old window was 40 rows, and a single
+    # deep turn writes about 21 of them, so two deep turns evicted the entire
+    # prior conversation — a three-week trip lost its thread twice a day.
+    #
+    # Rows are the wrong unit: what costs money is characters, and what makes a
+    # turn expensive is one enormous tool result, not many small exchanges.
+    # Budgeting by characters keeps far more of an ordinary conversation and
+    # still bounds the worst case.
+    history_max_rows: int = 200
+    history_max_chars: int = 48_000
+    # A single stored tool result replayed in full. The model already saw all of
+    # it in the turn that produced it; replaying 30k characters of search JSON
+    # is what evicted everything else.
+    history_max_tool_result_chars: int = 3_000
+
+    # Keeping track of what a group still has to do before a trip. Anything
+    # outstanding surfaces in the morning brief, which goes to Cordia and to
+    # nobody else. Cord never chases the assignee: the family did not sign up to
+    # be nagged by an assistant, least of all one speaking for her.
+    task_lead_days: int = 21   # how far ahead of the date to start mentioning it
 
     enable_flight_search: bool = True
     enable_lease_review: bool = True

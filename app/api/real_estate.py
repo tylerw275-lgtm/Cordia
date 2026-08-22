@@ -2,11 +2,12 @@ import uuid
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
+from app.api.model_body import model_kwargs, required
 from app.models.real_estate import Lease, LeaseClause, LeaseReminder
 
 router = APIRouter(prefix="/api/v1/leases", tags=["real_estate"])
@@ -27,9 +28,13 @@ async def list_leases(db: AsyncSession = Depends(get_db)) -> dict:
 
 @router.post("")
 async def create_lease(body: dict[str, Any], db: AsyncSession = Depends(get_db)) -> dict:
-    body["lease_start"] = date.fromisoformat(body["lease_start"])
-    body["lease_end"] = date.fromisoformat(body["lease_end"])
-    lease = Lease(**body)
+    required(body, "property_address", "lease_start", "lease_end")
+    try:
+        body["lease_start"] = date.fromisoformat(body["lease_start"])
+        body["lease_end"] = date.fromisoformat(body["lease_end"])
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="lease_start and lease_end must be YYYY-MM-DD")
+    lease = Lease(**model_kwargs(Lease, body))
     db.add(lease)
 
     # Auto-create renewal reminder
