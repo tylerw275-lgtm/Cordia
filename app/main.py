@@ -389,9 +389,26 @@ async def health_config() -> dict:
                 settings.owner_email[0] + "****@" + settings.owner_email.partition("@")[2]
                 if "@" in (settings.owner_email or "") else "(not set)"
             ),
+            # Gmail has no free inbound webhook, so inbound arrives by polling
+            # there and by webhook on Resend. Reporting only the polling flag
+            # made a Resend deployment look like inbound was off, and a Gmail
+            # deployment with no app password look like nothing at all — which
+            # is exactly the shape of "it sends but never replies".
             "inbound_polling": bool(
                 settings.enable_email and settings.email_provider == "gmail"
                 and settings.email_address and settings.email_app_password
+            ),
+            "inbound_path": (
+                "gmail_poll" if settings.email_provider == "gmail" else "resend_webhook"
+            ),
+            "inbound_reachable": bool(
+                settings.enable_email and (
+                    (settings.email_provider == "gmail"
+                     and settings.email_address and settings.email_app_password)
+                    or (settings.email_provider != "gmail"
+                        and (settings.email_webhook_signing_secret
+                             or settings.email_inbound_secret))
+                )
             ),
             "poll_interval_seconds": settings.email_poll_interval_seconds,
             "naples_inbox_set": bool(settings.naples_email_address and settings.naples_email_app_password),

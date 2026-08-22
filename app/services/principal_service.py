@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.authorized_user import AccessGrant, AuthorizedUser
+from app.utils.email_address import normalize_email
 from app.utils.phone import normalize_phone
 
 logger = logging.getLogger(__name__)
@@ -48,7 +49,7 @@ async def resolve_by_phone(db: AsyncSession, phone: str) -> AuthorizedUser | Non
 
 
 async def resolve_by_email(db: AsyncSession, email: str) -> AuthorizedUser | None:
-    address = (email or "").strip().lower()
+    address = normalize_email(email)
     if not address:
         return None
     rows = (await db.execute(
@@ -58,7 +59,7 @@ async def resolve_by_email(db: AsyncSession, email: str) -> AuthorizedUser | Non
     )).scalars()
     # Compare in Python rather than SQL so casing and stray whitespace on a
     # hand-entered address cannot cause a silent miss.
-    return next((u for u in rows if (u.email or "").strip().lower() == address), None)
+    return next((u for u in rows if normalize_email(u.email) == address), None)
 
 
 async def get_owner(db: AsyncSession) -> AuthorizedUser | None:
@@ -119,7 +120,7 @@ async def seed_principals(db: AsyncSession) -> int:
         if not name:
             continue
         phone = str(entry.get("phone") or "").strip() or None
-        email = (str(entry.get("email") or "").strip().lower() or None)
+        email = normalize_email(entry.get("email")) or None
 
         existing = None
         if phone:

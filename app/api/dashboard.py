@@ -322,6 +322,48 @@ def _pill(ok: bool, yes: str = "Working", no: str = "Not set") -> str:
     return f'<span class="pill {"ok" if ok else "bad"}">{yes if ok else no}</span>'
 
 
+def _when(value) -> str:
+    if not value:
+        return "never"
+    return value.strftime("%b %d, %-I:%M %p")
+
+
+def _inbound_health_rows(health: dict | None) -> str:
+    """Whether mail has actually arrived, and what became of it.
+
+    Sending working proves the API key and proves nothing about the webhook, so
+    "it emails me but never replies" had no visible answer anywhere. This is
+    that answer, in the browser, for someone who does not use a terminal.
+    """
+    if health is None:
+        return ""
+    if not health["ever_received_anything"]:
+        return _row(
+            "Mail actually received",
+            '<span class="pill bad">never</span> '
+            '<span class="note">Nothing has ever reached this app. The provider is not '
+            'calling the webhook &mdash; check that it is subscribed to '
+            '<code>email.received</code> and points at '
+            f'{settings.public_base_url.rstrip("/")}/webhook/email</span>',
+        )
+
+    rows = [_row("Last reply sent to a sender", _when(health["last_accepted"]))]
+    if health["last_ignored"]:
+        rows.append(_row(
+            "Last one ignored",
+            f'{_when(health["last_ignored"])} '
+            f'<span class="note">({health["last_ignored_reason"] or "unknown"})</span>',
+        ))
+    if health["last_failure"]:
+        detail = health["last_failure_detail"] or ""
+        rows.append(_row(
+            "Last inbound failure",
+            f'<span class="pill bad">{_when(health["last_failure"])}</span> '
+            f'<span class="note">{health["last_failure_where"] or ""} {detail[:160]}</span>',
+        ))
+    return "".join(rows)
+
+
 def _row(label: str, value: str) -> str:
     return f'<div class="row"><span class="label">{label}</span><span class="val">{value}</span></div>'
 
@@ -447,6 +489,7 @@ async def dashboard(request: Request, added: str = "") -> HTMLResponse:
     # ---- what it costs ---------------------------------------------------
     usage_month = usage_all = credit = None
     failures = []
+    inbound_health = None
     try:
         from app.services import usage_service
         async with get_db_session() as db:
@@ -457,6 +500,7 @@ async def dashboard(request: Request, added: str = "") -> HTMLResponse:
             usage_all = await usage_service.summary(db)
             credit = await usage_service.credit_status(db)
             failures = await usage_service.recent_errors(db)
+            inbound_health = await usage_service.inbound_email_health(db)
     except Exception as e:
         logger.error(f"Dashboard could not read usage: {e}")
 
@@ -677,6 +721,7 @@ see what they send back — ask Cord to give them circle access.</div>
 {_row("Naples house inbox", '<span class="pill ok">on</span>' if
       (settings.naples_email_address and settings.naples_email_app_password)
       else '<span class="pill off">not set up</span>')}
+{_inbound_health_rows(inbound_health)}
 </div>
 
 {failure_section}

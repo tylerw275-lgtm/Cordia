@@ -9,6 +9,7 @@ import re
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.utils.email_address import normalize_email
 from app.services import claude_service, email_service, turn_queue
 
 logger = logging.getLogger(__name__)
@@ -24,10 +25,8 @@ _ON_WROTE_RE = re.compile(r"^On .+ wrote:$", re.IGNORECASE)
 
 
 def extract_email(value) -> str:
-    if isinstance(value, dict):
-        value = value.get("email") or value.get("address") or ""
-    m = _EMAIL_RE.search(str(value or ""))
-    return m.group(0).lower() if m else ""
+    """The bare address inside a From header, payload field or dict."""
+    return normalize_email(value)
 
 
 def strip_quoted(body: str) -> str:
@@ -79,14 +78,15 @@ def _mask(addr: str) -> str:
 async def _resolve_trusted_contact(db: AsyncSession, sender: str):
     """A contact Cordia marked trusted_inbound — their mail is captured as an
     FYI for Cordia (schedules, dates, updates), never conversed with."""
-    from sqlalchemy import func, select
+    from sqlalchemy import select
     from app.models.contact import Contact
-    result = await db.execute(
-        select(Contact)
-        .where(Contact.trusted_inbound.is_(True))
-        .where(func.lower(Contact.email) == sender)
-    )
-    return result.scalars().first()
+    # Compared in Python, not SQL: a stored address may carry a display name
+    # from the dashboard form, and func.lower() on that never matches a bare
+    # sender. Trusted contacts are a short list.
+    rows = (await db.execute(
+        select(Contact).where(Contact.trusted_inbound.is_(True))
+    )).scalars()
+    return next((c for c in rows if normalize_email(c.email) == sender), None)
 
 
 async def _resolve_sender(db: AsyncSession, sender: str):
@@ -153,15 +153,34 @@ def _fence_capture(name: str, subject: str, body: str) -> str:
     )
 
 
+async def _dropped(reason: str, sender: str | None, subject: str | None) -> str:
+    """Record and report an email that produced no reply, then return the status.
+
+    Staying silent towards the sender is right — a reply would confirm the
+    address to whoever is probing it. Staying silent towards the operator is
+    how "it won't answer my emails" arrived twice with nothing to go on.
+    """
+    try:
+        from app.services import alerts, usage_service
+        await usage_service.record_standalone(
+            "email_ignored", actor=sender, cost_usd=0.0, details={"reason": reason},
+        )
+        await alerts.notify_inbound_email_dropped(reason, sender, subject)
+    except Exception as e:                       # pragma: no cover - defensive
+        logger.error(f"Could not report a dropped inbound email: {e}")
+    return reason
+
+
 async def process_inbound_email(db: AsyncSession, sender: str, subject: str, body: str) -> str:
     """Returns a short status describing what happened, so callers (and the
     provider's webhook log) can see why a message produced no reply."""
-    sender = (sender or "").strip().lower()
+    # Normalised as a mailbox: a display name here dropped every reply.
+    sender = normalize_email(sender) or (sender or "").strip().lower()
     body = strip_quoted(body or "")
     if not sender:
-        return "ignored_no_sender"
+        return await _dropped("ignored_no_sender", sender, subject)
     if not body:
-        return "ignored_empty_body"
+        return await _dropped("ignored_empty_body", sender, subject)
 
     role, member, conv_key = await _resolve_sender(db, sender)
     if role == "unapproved":
@@ -171,13 +190,13 @@ async def process_inbound_email(db: AsyncSession, sender: str, subject: str, bod
             f"Email from {_mask(sender)} ({member.name}) — on the roster but not "
             "approved by Cordia; ignored"
         )
-        return "ignored_unapproved_sender"
+        return await _dropped("ignored_unapproved_sender", sender, subject)
     if role == "unknown":
         logger.warning(
             f"Inbound email from unknown sender {_mask(sender)} — ignored. "
             "Set OWNER_EMAIL to this address if it is Cordia's."
         )
-        return "ignored_unknown_sender"
+        return await _dropped("ignored_unknown_sender", sender, subject)
 
     logger.info(f"Inbound email from {_mask(sender)} (role={role}): {subject[:50]}")
 

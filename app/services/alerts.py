@@ -143,7 +143,21 @@ async def notify_error(
     if _SENDING:
         return False
 
-    key = (where, error_type)
+    return await _throttled(
+        (where, error_type),
+        lambda suppressed, first_seen: _error_body(
+            where, error_type, detail, actor, message, suppressed, first_seen,
+        ),
+        subject=f"[Cordia] Error in {where}: {error_type}",
+    )
+
+
+async def _throttled(key: tuple, build_body, subject: str) -> bool:
+    """Send one alert, unless we have said this recently or said too much.
+
+    `build_body(suppressed, first_seen)` is called only if the alert is actually
+    going out, so the count of what was held back can be folded into the text.
+    """
     now = _now()
     seen = _SEEN.get(key)
     _SEEN.pop(key, None)
@@ -170,32 +184,10 @@ async def notify_error(
         _SEEN[key] = {"last_sent": last_sent, "suppressed": suppressed + 1,
                       "since": first_seen}
         _trim()
-        logger.warning(f"Operator alert cap reached; suppressing {where}/{error_type}")
+        logger.warning(f"Operator alert cap reached; suppressing {key}")
         return False
 
-    lines = [
-        f"**Where:** `{where}`",
-        f"**Error:** `{error_type}`",
-        f"**Who:** {_mask(actor)}",
-        f"**When:** {now.isoformat(timespec='seconds')}",
-    ]
-    if detail:
-        lines.append(f"**Provider said:** {detail}")
-    if suppressed:
-        lines.append(
-            f"**Also:** {suppressed} more of these since "
-            f"{first_seen.isoformat(timespec='minutes')}, not emailed separately."
-        )
-    body = "## Cord hit an error\n\n" + "\n".join(lines)
-    if message:
-        body += f"\n\n### What she sent\n\n> {message.strip()[:2000]}\n"
-    body += (
-        f"\n\n---\n\nShe was told: \"Something went wrong on my end. Please try "
-        f"again in a moment.\"\n\n"
-        f"Full ledger: {settings.public_base_url.rstrip('/')}/health/dashboard"
-    )
-
-    ok = await _send(f"[Cordia] Error in {where}: {error_type}", body)
+    ok = await _send(subject, build_body(suppressed, first_seen))
     _SEEN[key] = {
         # Only a delivered alert starts the next quiet period.
         "last_sent": now if ok else last_sent,
@@ -206,6 +198,149 @@ async def notify_error(
     return ok
 
 
+def _also_line(suppressed: int, first_seen: datetime) -> str:
+    if not suppressed:
+        return ""
+    return (f"\n**Also:** {suppressed} more of these since "
+            f"{first_seen.isoformat(timespec='minutes')}, not emailed separately.")
+
+
+def _error_body(where, error_type, detail, actor, message, suppressed, first_seen) -> str:
+    lines = [
+        f"**Where:** `{where}`",
+        f"**Error:** `{error_type}`",
+        f"**Who:** {_mask(actor)}",
+        f"**When:** {_now().isoformat(timespec='seconds')}",
+    ]
+    if detail:
+        lines.append(f"**Provider said:** {detail}")
+    body = "## Cord hit an error\n\n" + "\n".join(lines) + _also_line(suppressed, first_seen)
+    if message:
+        body += f"\n\n### What she sent\n\n> {message.strip()[:2000]}\n"
+    return body + (
+        f"\n\n---\n\nShe was told: \"Something went wrong on my end. Please try "
+        f"again in a moment.\"\n\n"
+        f"Full ledger: {settings.public_base_url.rstrip('/')}/health/dashboard"
+    )
+
+
 def _trim() -> None:
     while len(_SEEN) > _MAX_TRACKED:
         _SEEN.popitem(last=False)
+
+
+# Why an inbound email produced no reply, in words that name the fix rather than
+# the symptom. Every one of these used to be a log line and a 200, which is how
+# "it won't answer my emails" reached the operator twice with nothing to go on.
+_DROP_REASONS = {
+    "ignored_unknown_sender": (
+        "That address is not on the roster, so Cord ignored it on purpose — it will "
+        "not converse with an address it does not recognise. If this is Cordia, set "
+        "OWNER_EMAIL to it, or add the address to her principal record. If it is a "
+        "relative, they need circle access and an approved consent record."
+    ),
+    "ignored_unapproved_sender": (
+        "On the roster but not approved (or rejected) by Cordia, so it was ignored "
+        "without a reply. Approve them in the dashboard if that is wrong."
+    ),
+    "ignored_empty_body": (
+        "The message arrived with no readable text. Usually the provider sent "
+        "metadata only and the body fetch failed, or the mail was HTML that "
+        "flattened to nothing."
+    ),
+    "ignored_no_sender": (
+        "The provider delivered a message with no From address, which normally "
+        "means the webhook payload was not the shape we expect."
+    ),
+}
+
+
+async def notify_inbound_email_dropped(
+    reason: str, sender: str | None, subject: str | None = None
+) -> bool:
+    """Someone emailed the assistant and got no answer.
+
+    A silent 200 is right for the sender — replying would confirm the address to
+    whoever is probing it — but wrong for the operator, who otherwise learns
+    about it only when the person complains.
+    """
+    if _SENDING:
+        return False
+
+    def body(suppressed: int, first_seen) -> str:
+        text = (
+            "## An email got no reply\n\n"
+            f"**From:** {_mask(sender)}\n"
+            f"**Subject:** {(subject or '(none)')[:120]}\n"
+            f"**Reason:** `{reason}`\n"
+            f"**When:** {_now().isoformat(timespec='seconds')}\n"
+            + _also_line(suppressed, first_seen)
+        )
+        explain = _DROP_REASONS.get(reason)
+        if explain:
+            text += f"\n\n### What that means\n\n{explain}\n"
+        return text + (
+            f"\n\n---\n\nNothing was sent back to them, deliberately: replying would "
+            f"confirm the address to whoever sent it.\n\n"
+            f"Config: {settings.public_base_url.rstrip('/')}/health/config"
+        )
+
+    return await _throttled(
+        ("email_inbound", reason), body,
+        subject=f"[Cordia] Inbound email ignored: {reason}",
+    )
+
+
+_WEBHOOK_REJECTIONS = {
+    "no_secret_configured": (
+        "Neither EMAIL_WEBHOOK_SIGNING_SECRET nor EMAIL_INBOUND_SECRET is set, so the "
+        "endpoint refuses everything — it fails closed on purpose, because an unset "
+        "secret used to mean anyone could POST a forged sender and drive a model turn.\n\n"
+        "**Every inbound email is being rejected right now.** Outbound still works, which "
+        "is why this looks like \"it emails me but never replies\".\n\n"
+        "Fix: copy the signing secret (`whsec_...`) from the Resend dashboard's webhook "
+        "settings into EMAIL_WEBHOOK_SIGNING_SECRET in Railway."
+    ),
+    "signature_invalid": (
+        "EMAIL_WEBHOOK_SIGNING_SECRET is set but the signature did not verify. Either the "
+        "secret in Railway no longer matches the one in the Resend dashboard, or something "
+        "other than Resend is posting to the endpoint."
+    ),
+    "url_secret_invalid": (
+        "EMAIL_INBOUND_SECRET is set but the value in the request did not match. Check the "
+        "?secret= on the webhook URL configured at the provider."
+    ),
+}
+
+
+async def notify_inbound_webhook_rejected(reason: str) -> bool:
+    """The inbound email endpoint turned a delivery away.
+
+    Worth its own alert rather than folding into the dropped-email one, because
+    this happens *before* the message is parsed: no sender, no subject, and none
+    of the other reporting sees it. It is also the single most likely cause of
+    inbound email appearing to do nothing at all.
+    """
+    if _SENDING:
+        return False
+
+    def body(suppressed: int, first_seen) -> str:
+        text = (
+            "## Inbound email is being refused at the door\n\n"
+            f"**Reason:** `{reason}`\n"
+            f"**When:** {_now().isoformat(timespec='seconds')}\n"
+            + _also_line(suppressed, first_seen)
+        )
+        explain = _WEBHOOK_REJECTIONS.get(reason)
+        if explain:
+            text += f"\n\n{explain}\n"
+        return text + (
+            f"\n\n---\n\nThe provider is being told 403, so it will retry and then give up. "
+            f"Check its delivery log for failed attempts.\n\n"
+            f"Config: {settings.public_base_url.rstrip('/')}/health/config"
+        )
+
+    return await _throttled(
+        ("email_webhook", reason), body,
+        subject=f"[Cordia] Inbound email webhook rejected: {reason}",
+    )

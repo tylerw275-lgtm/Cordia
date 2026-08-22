@@ -241,6 +241,15 @@ def _safe_detail(exc: BaseException) -> str | None:
     library, never for a generic exception whose message could be anything. The
     module the exception class came from is the test.
     """
+    # An exception of ours can opt in when its message is built from provider
+    # text and our own strings and can never quote the user — the same opt-in
+    # shape as the tool dispatcher, and for the same reason: defaulting to
+    # "include it" is how something private leaks, defaulting to "drop it" is
+    # how an alert arrives with the one detail it existed to carry removed.
+    if getattr(exc, "detail_is_safe", False):
+        text = str(exc).strip()
+        return text[:400] if text else None
+
     module = (type(exc).__module__ or "").split(".")[0]
     if module not in _PROVIDER_ERROR_MODULES:
         return None
@@ -340,6 +349,47 @@ async def summary(db: AsyncSession, since: datetime | None = None) -> dict:
         "usage_cost": usage_cost,
         "fixed_cost": fixed,
         "total_cost": usage_cost + fixed,
+    }
+
+
+async def inbound_email_health(db: AsyncSession) -> dict:
+    """Has an inbound email ever actually reached us, and what happened to it.
+
+    The one question nobody could answer while inbound email appeared to do
+    nothing: is the provider calling us at all? Outbound working proves the API
+    key; it proves nothing about the webhook. Everything here is already in the
+    ledger — this just asks it the useful question.
+    """
+    async def _latest(*event_types: str):
+        row = (await db.execute(
+            select(UsageEvent)
+            .where(UsageEvent.event_type.in_(event_types))
+            .order_by(UsageEvent.occurred_at.desc())
+            .limit(1)
+        )).scalars().first()
+        return row
+
+    replied = await _latest("email_in")
+    ignored = await _latest("email_ignored")
+    refused = (await db.execute(
+        select(UsageEvent)
+        .where(UsageEvent.event_type == "error")
+        .order_by(UsageEvent.occurred_at.desc())
+        .limit(20)
+    )).scalars().all()
+    refused = next(
+        (r for r in refused
+         if str((r.details or {}).get("where", "")).startswith("email_")), None
+    )
+
+    return {
+        "last_accepted": replied.occurred_at if replied else None,
+        "last_ignored": ignored.occurred_at if ignored else None,
+        "last_ignored_reason": (ignored.details or {}).get("reason") if ignored else None,
+        "last_failure": refused.occurred_at if refused else None,
+        "last_failure_where": (refused.details or {}).get("where") if refused else None,
+        "last_failure_detail": (refused.details or {}).get("detail") if refused else None,
+        "ever_received_anything": bool(replied or ignored or refused),
     }
 
 
