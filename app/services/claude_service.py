@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import uuid
 from typing import Any
 
@@ -264,6 +265,47 @@ async def _persist_message(
     msg = Message(conversation_id=conversation_id, role=role, content=raw)
     db.add(msg)
     await db.commit()
+
+
+# Tools that actually put a deliverable in front of her. If the model says it is
+# sending something, one of these has to have run in the same turn — there is no
+# later in which to run it.
+_DELIVERY_TOOLS = frozenset({
+    "send_report_email", "deliver_project", "send_outbound", "ask_family_member",
+})
+
+# The promise that cannot be kept. Cordia asked for a trip plan, answered the
+# interview, and was told "sending to your inbox in just a minute" and then
+# "let me finish building it and get it to you right now" — after which nothing
+# happened at all, because a turn ends when the model stops replying and nothing
+# resumes it. She was left waiting on work that had already stopped.
+_PROMISED_LATER = re.compile(
+    r"\b("
+    r"sending (it|that|this|them)?\s*(to|over|to your|shortly|now|in a)"
+    r"|i(?:'| a)?m (?:going to |about to )?(?:send|email|put together|build|finish|work)"
+    r"|(?:i'?ll|i will) (?:send|email|have|get|put|finish|build|share)"
+    r"|in (?:just )?a (?:minute|moment|sec|few)"
+    r"|(?:almost|nearly) (?:done|there|finished)"
+    r"|(?:one|a) moment while i"
+    r"|let me (?:finish|go|pull|put|build|get|wrap|write)\\b"
+    r"|get (?:it|that|this) to you"
+    r"|coming (?:right )?(?:up|over)"
+    r"|shortly|momentarily"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_NO_LATER_NUDGE = (
+    "STOP. You just told her you would send or finish something. There is no "
+    "later: this turn ends the moment you reply, nothing runs in the background, "
+    "and she will hear nothing more until she messages you again. She has been "
+    "left waiting on a promise like this before.\n\n"
+    "Do it NOW, in this turn, with the tools you have — send_report_email for a "
+    "long deliverable, deliver_project for project work. Then reply describing "
+    "what you actually sent.\n\n"
+    "If you genuinely cannot finish it now, say so plainly and say what you need "
+    "from her. Do not promise to deliver it later."
+)
 
 
 # Identity is settled before the model ever sees the message, by the address or
@@ -653,6 +695,8 @@ async def chat(
                       else settings.max_tool_iterations)
     tool_rounds = 0
     pause_resumes = 0
+    delivered = False
+    nudged = False
     web_errors: list[str] = []
     research_unavailable = False
     pause_partial = ""
@@ -699,6 +743,20 @@ async def chat(
 
         if response.stop_reason == "end_turn":
             text = _extract_text(response.content) or _FALLBACK_REPLY
+
+            # A promise to deliver, with nothing delivered. There is no turn in
+            # which to keep it, so send the model back with the tools rather
+            # than letting her wait on work that has already stopped.
+            if not delivered and not nudged and _PROMISED_LATER.search(text):
+                nudged = True
+                logger.warning(
+                    f"Reply promised a later delivery with none made "
+                    f"(conversation {conversation_id}); sending it back to finish"
+                )
+                messages.append({"role": "assistant", "content": assistant_content})
+                messages.append({"role": "user", "content": _NO_LATER_NUDGE})
+                continue
+
             if web_errors and not _extract_text(response.content):
                 # Never let a failed search read as "nothing found."
                 return ("I could not reach the web to check that just now "
@@ -763,6 +821,8 @@ async def chat(
                             extra = _dispatch_extras(handler, sender_role,
                                                      sender_member, sender_user)
                             result = await handler(db=db, **extra, **block.input)
+                            if block.name in _DELIVERY_TOOLS:
+                                delivered = True
                         except Exception as e:
                             logger.error(f"Tool {block.name} error: {e}")
                             # Also where it can be seen without shell access.
