@@ -262,3 +262,59 @@ async def test_a_principal_with_no_address_is_named_in_the_message(db, mocker):
     )
     assert result["sent"] is False
     assert "Karie" in result["message"]
+
+
+# --- one decision, both channels -------------------------------------------
+
+@pytest.mark.asyncio
+async def test_both_channels_ask_the_same_question(db):
+    """The two resolvers were separate functions, and each fix landed on
+    whichever channel someone happened to be looking at. They share one now."""
+    from app.services import access
+
+    await _relative(db)
+    for status, expected in (("approved", "family"), ("pending", "unapproved"),
+                             ("rejected", "unapproved")):
+        await _consent(db, RELATIVE_PHONE, status=status)
+
+        by_sms, _ = await sms._resolve_sender(db, RELATIVE_PHONE)
+        by_email, _, _ = await email_inbound._resolve_sender(db, RELATIVE_EMAIL)
+        shared = await access.resolve(db, phone=RELATIVE_PHONE)
+
+        assert by_sms == expected, f"sms said {by_sms} for {status}"
+        assert by_email == expected, f"email said {by_email} for {status}"
+        assert shared.role == expected
+
+
+@pytest.mark.asyncio
+async def test_a_stop_text_does_not_also_silence_email(db):
+    """STOP ends the SMS program. It is not a request never to be answered
+    again on a channel they themselves just wrote in on."""
+    await _relative(db)
+    await _consent(db, RELATIVE_PHONE, status="approved", opted_out=True)
+
+    by_sms, _ = await sms._resolve_sender(db, RELATIVE_PHONE)
+    by_email, _, _ = await email_inbound._resolve_sender(db, RELATIVE_EMAIL)
+
+    assert by_sms == "opted_out"
+    assert by_email == "family"
+
+
+@pytest.mark.asyncio
+async def test_the_owner_resolves_from_config_on_either_channel(db, mocker):
+    """A deployment that never set PRINCIPALS_JSON must still recognise her."""
+    from app.services import access
+
+    mocker.patch.object(settings, "cordia_phone_number", "+16157080002")
+    mocker.patch.object(settings, "owner_email", "cordia@example.com")
+
+    assert (await access.resolve(db, phone="+16157080002")).role == "owner"
+    assert (await access.resolve(db, email="cordia@example.com")).role == "owner"
+
+
+@pytest.mark.asyncio
+async def test_a_stranger_is_unknown_on_either_channel(db):
+    from app.services import access
+
+    assert (await access.resolve(db, phone="+17876765645")).role == "unknown"
+    assert (await access.resolve(db, email="stranger@example.com")).role == "unknown"

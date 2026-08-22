@@ -90,28 +90,29 @@ async def _resolve_trusted_contact(db: AsyncSession, sender: str):
 
 
 async def _resolve_sender(db: AsyncSession, sender: str):
-    """Return (role, member, conversation_key).
+    """Return (role, member, conversation_key), for the email channel.
 
-    Roles match the SMS resolver's, including 'unapproved' — deliberately.
-    Rejecting someone in the dashboard used to stop them texting and do nothing
-    at all about email, so the approval Cordia thought she had revoked was still
-    live on the other channel.
+    The access decision itself lives in `access.resolve`, shared with SMS —
+    roles included, so 'unapproved' means the same thing on both. What is
+    email-specific is the trusted-contact capture path and the conversation key.
     """
-    # Karie works mostly by email, so this path matters as much as the SMS one.
-    from app.services import consent_service, principal_service
-    principal = await principal_service.resolve_by_email(db, sender)
-    if principal is not None:
-        # Key the thread on the address they wrote from, so each principal has
-        # their own conversation rather than sharing Cordia's.
-        return "owner", principal, sender
-    if settings.owner_email and sender == settings.owner_email.strip().lower():
+    from app.services import access
+
+    who = await access.resolve(db, email=sender)
+    if who.role == "owner":
+        if who.principal is not None:
+            # Key the thread on the address they wrote from, so each principal
+            # has their own conversation rather than sharing Cordia's.
+            return "owner", who.principal, sender
         return "owner", None, (settings.cordia_phone_number or settings.owner_email)
-    member = await family_circle_service.resolve_member_by_email(db, sender)
-    if member and member.has_circle_access:
-        # Same gate as SMS: on the roster is not the same as approved.
-        if member.phone and await consent_service.status_for(db, member.phone) in ("rejected", "pending"):
-            return "unapproved", member, None
-        return "family", member, (member.phone or sender)
+    if who.role == "opted_out":
+        # STOP ends the SMS program, not every channel — and they are the one
+        # who just wrote in. Answering the email they sent is not a message they
+        # did not ask for. Cord still cannot text them; send_sms enforces that.
+        return "family", who.member, (getattr(who.member, "phone", None) or sender)
+    if who.role in ("family", "unapproved"):
+        return who.role, who.member, (getattr(who.member, "phone", None) or sender)
+
     contact = await _resolve_trusted_contact(db, sender)
     if contact:
         # A thread of its own: third-party content must not accumulate in

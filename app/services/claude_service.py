@@ -9,7 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.conversation import Conversation, Message
-from app.prompts.prompt_profiles import get_profile, is_deep_work
+from app.prompts.intent import detect_context, is_deep_work
+from app.prompts.prompt_profiles import get_profile
 from app.prompts.system_prompt import (
     build_family_system_prompt,
     build_system_prompt,
@@ -22,22 +23,6 @@ logger = logging.getLogger(__name__)
 
 _client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
 
-CONTEXT_KEYWORDS = {
-    "trip_planning": ["flight", "fly", "hotel", "trip", "travel", "airport", "book", "vacation", "thanksgiving", "cruise"],
-    "event_planning": ["party", "comedy", "event", "gala", "fundraiser", "dinner party", "host", "celebration", "show", "night out"],
-    "family_coordination": ["family", "gather", "birthday", "anniversary", "schedule", "get together", "grandkids", "reunion"],
-    "lease_review": ["lease", "rent", "tenant", "landlord", "clause", "renewal", "property",
-                     "contract", "negotiate", "good deal", "square feet", "cam", "escalation",
-                     "guarantee", "sublet", "build-out", "buildout", "tenant improvement"],
-}
-
-
-def detect_context(message: str) -> str | None:
-    lower = message.lower()
-    for context, keywords in CONTEXT_KEYWORDS.items():
-        if any(kw in lower for kw in keywords):
-            return context
-    return None
 
 
 _FALLBACK_REPLY = "I'm on it - give me a moment and ask me again if you don't hear back."

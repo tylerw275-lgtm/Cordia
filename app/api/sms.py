@@ -11,8 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.config import settings
-from app.services import claude_service, consent_service, family_circle_service, principal_service, sms_service, twilio_service
-from app.utils.phone import phones_match
+from app.services import (
+    access, claude_service, consent_service, family_circle_service, sms_service, twilio_service,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -57,37 +58,14 @@ async def _has_signed_consent_form(db: AsyncSession, phone: str) -> bool:
 
 
 async def _resolve_sender(db: AsyncSession, phone: str):
-    """Return (role, member). role is 'owner', 'family', 'opted_out',
-    'unapproved', or 'unknown'.
+    """Return (role, member), for the SMS channel.
 
-    'unapproved' is deliberately distinct from 'unknown': the number is on a
-    profile, but Cordia has not approved (or has rejected) it, so it gets no
-    conversation. The consent form is publicly linked, so signing it is never
-    by itself enough to reach her assistant.
-
-    'opted_out' applies to principals too, which is easy to get wrong. Anyone
-    who texted STOP still resolves to a real person, so the turn used to run in
-    full and bill for an answer that send_sms then suppressed — she would text,
-    pay for the model, and hear nothing.
+    The decision itself lives in `access.resolve`, shared with the email path.
+    Keeping two copies is what let email skip the approval gate entirely for a
+    release: each fix landed on the channel someone happened to be looking at.
     """
-    status = await consent_service.status_for(db, phone)
-
-    # Principals first: Cordia and anyone who gets their own full assistant.
-    principal = await principal_service.resolve_by_phone(db, phone)
-    if principal is not None:
-        return ("opted_out" if status == "opted_out" else "owner"), principal
-    # Config fallback so a deployment that has not set PRINCIPALS_JSON still
-    # resolves Cordia rather than rejecting her own number.
-    if phones_match(phone, settings.cordia_phone_number) or phones_match(phone, settings.cordia_test_phone_number):
-        return ("opted_out" if status == "opted_out" else "owner"), None
-    member = await family_circle_service.resolve_member_by_phone(db, phone)
-    if member and member.has_circle_access:
-        if status == "opted_out":
-            return "opted_out", member
-        if status in ("rejected", "pending"):
-            return "unapproved", member
-        return "family", member
-    return "unknown", None
+    sender = await access.resolve(db, phone=phone)
+    return sender.role, (sender.principal or sender.member)
 
 
 async def _record_consent(db: AsyncSession, phone: str, approved: bool = False) -> None:
@@ -283,7 +261,7 @@ _NOTE_MEMORY = 3
 
 def _working_note(to: str, body: str = "", followup: bool = False) -> str:
     """Pick a holding line, matched to the ask and never repeating for a person."""
-    from app.prompts.prompt_profiles import is_deep_work
+    from app.prompts.intent import is_deep_work
 
     if followup:
         pool = _STILL_WORKING_NOTES
