@@ -9,7 +9,7 @@ import re
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.services import claude_service, email_service
+from app.services import claude_service, email_service, turn_queue
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +180,18 @@ async def process_inbound_email(db: AsyncSession, sender: str, subject: str, bod
         return "ignored_unknown_sender"
 
     logger.info(f"Inbound email from {_mask(sender)} (role={role}): {subject[:50]}")
+
+    # Take the conversation's turn, the same one SMS takes. A principal's email
+    # thread and their text thread are frequently the SAME conversation — Cordia's
+    # inbound mail keys on her phone number — so without this a text and an email
+    # arriving together produced two turns racing each other, which is the bug she
+    # already reported once on SMS alone.
+    async with turn_queue.lock_for(conv_key):
+        return await _reply(db, sender, subject, body, role, member, conv_key)
+
+
+async def _reply(db: AsyncSession, sender: str, subject: str, body: str,
+                 role: str, member, conv_key: str) -> str:
     from app.services import usage_service
     await usage_service.record_email(sender, outbound=False)
     conversation = await claude_service.get_or_create_conversation(db, conv_key)

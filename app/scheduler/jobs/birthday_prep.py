@@ -72,7 +72,13 @@ async def send_birthday_prep() -> None:
             if (bday - today).days != lead:
                 continue
             msg = await compose_birthday_prep(db, m, lead)
-            await sms_service.send_sms(to=settings.cordia_phone_number, body=msg)
-            # Record so Cordia's reply ("yes, ask them") has context
-            await claude_service.record_assistant_message(db, settings.cordia_phone_number, msg)
-            logger.info(f"Sent birthday prep for {m.name}")
+            # Only record what actually went out. send_sms returns False when
+            # she has opted out or the carrier refused, and writing the message
+            # anyway put a text she never received into her transcript — where
+            # Cord would then answer as though she had read it.
+            if await sms_service.send_sms(to=settings.cordia_phone_number, body=msg):
+                # Record so Cordia's reply ("yes, ask them") has context
+                await claude_service.record_assistant_message(
+                    db, settings.cordia_phone_number, msg
+                )
+                logger.info(f"Sent birthday prep for {m.name}")

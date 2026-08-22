@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
+from app.api.model_body import model_kwargs, required
 from app.models.trips import FlightWatch, PriceSnapshot, Trip
 
 router = APIRouter(prefix="/api/v1/trips", tags=["trips"])
@@ -27,10 +28,14 @@ async def list_trips(db: AsyncSession = Depends(get_db)) -> dict:
 
 @router.post("")
 async def create_trip(body: dict[str, Any], db: AsyncSession = Depends(get_db)) -> dict:
-    body["depart_date"] = date.fromisoformat(body["depart_date"])
-    if "return_date" in body and body["return_date"]:
-        body["return_date"] = date.fromisoformat(body["return_date"])
-    trip = Trip(**body)
+    required(body, "title", "depart_date")
+    try:
+        body["depart_date"] = date.fromisoformat(body["depart_date"])
+        if body.get("return_date"):
+            body["return_date"] = date.fromisoformat(body["return_date"])
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="Dates must be YYYY-MM-DD")
+    trip = Trip(**model_kwargs(Trip, body))
     db.add(trip)
     await db.commit()
     await db.refresh(trip)

@@ -42,6 +42,11 @@ class Settings(BaseSettings):
 
     duffel_access_token: str = ""
     duffel_webhook_secret: str = ""  # from the Duffel dashboard webhook config
+    # How stale a Duffel webhook may be before it is refused. The signature
+    # covers a timestamp precisely so a captured delivery cannot be replayed
+    # forever: order.created is idempotent, but a replayed schedule-change event
+    # would text Cordia about the same flight change over and over.
+    duffel_webhook_max_age_seconds: int = 300
     enable_flight_booking: bool = False  # Duffel Links hosted checkout (off until tested)
 
     # Email (independent of Crown Bakeries — dedicated assistant identity)

@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import json
 import logging
+import time
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Request, Response
@@ -32,21 +33,75 @@ h1{{font-size:1.3rem}}</style></head>
 <body><h1>{title}</h1><p>{message}</p></body></html>"""
 
 
-def _verify_signature(payload: bytes, signature_header: str) -> bool:
-    """Verify Duffel's webhook signature (t=<ts>,v1=<hmac-sha256>)."""
+def _verify_signature(payload: bytes, signature_header: str, *, now: float | None = None) -> bool:
+    """Verify Duffel's webhook signature (t=<ts>,v1=<hmac-sha256>).
+
+    This endpoint is public — it has to be, Duffel calls it — and what arrives
+    on it books flights and texts Cordia. The signature is the only thing
+    standing between a stranger and a message from her assistant saying her
+    flight has changed.
+
+    The timestamp is part of what is signed, and it is checked. Without that,
+    one captured delivery can be replayed forever: order.created is idempotent
+    on the order id, but a replayed schedule-change event has nothing to
+    deduplicate against and would text her about the same change every time.
+    """
     secret = settings.duffel_webhook_secret
     if not secret:
-        # No secret configured — accept only in debug/test setups
-        logger.warning("Duffel webhook received without a configured secret")
-        return settings.debug
+        if not settings.debug:
+            # Refuse rather than fall open. An unset secret in production is a
+            # misconfiguration, and treating it as "accept everything" turns a
+            # missing environment variable into an open door.
+            logger.error(
+                "Duffel webhook rejected: DUFFEL_WEBHOOK_SECRET is not set. "
+                "Set it from the Duffel dashboard webhook config."
+            )
+            return False
+        logger.warning("Duffel webhook accepted without a secret (debug mode only)")
+        return True
     try:
         parts = dict(p.split("=", 1) for p in signature_header.split(","))
         timestamp, received = parts["t"], parts["v1"]
     except (ValueError, KeyError):
         return False
+
+    max_age = settings.duffel_webhook_max_age_seconds
+    if max_age > 0:
+        try:
+            age = (time.time() if now is None else now) - float(timestamp)
+        except ValueError:
+            return False
+        if abs(age) > max_age:
+            logger.warning(f"Duffel webhook rejected: signature is {int(age)}s old")
+            return False
+
     signed = f"{timestamp}.".encode() + payload
     expected = hmac.new(secret.encode(), signed, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, received)
+
+
+def _passenger_names(passengers) -> list[str] | None:
+    """Passenger names as a list of strings, whatever Duffel sent.
+
+    The column is a text array. duffel_service already flattens names, but this
+    is the money path: if the shape ever differs — an API version bump, a
+    partner order, a change upstream — the insert fails after db.add, the
+    webhook 500s, Duffel retries into the same failure, and the booking is
+    never recorded. Cordia's flight is booked and her assistant never tells her.
+    A name rendered awkwardly is a far better outcome than that.
+    """
+    if not passengers:
+        return None
+    names = []
+    for passenger in passengers:
+        if isinstance(passenger, str):
+            names.append(passenger)
+        elif isinstance(passenger, dict):
+            full = f"{passenger.get('given_name', '')} {passenger.get('family_name', '')}".strip()
+            names.append(full or passenger.get("name") or str(passenger))
+        else:
+            names.append(str(passenger))
+    return names or None
 
 
 async def _handle_order_created(db: AsyncSession, order_id: str) -> None:
@@ -77,7 +132,7 @@ async def _handle_order_created(db: AsyncSession, order_id: str) -> None:
         depart_time=depart,
         total_amount=order.get("total_amount"),
         currency=order.get("currency") or "USD",
-        passengers=order.get("passengers") or None,
+        passengers=_passenger_names(order.get("passengers")),
         raw_order=order,
     )
     db.add(booking)

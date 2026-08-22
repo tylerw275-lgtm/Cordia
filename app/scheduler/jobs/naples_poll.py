@@ -82,7 +82,10 @@ async def poll_naples_inbox() -> None:
                     db, conversation.id, wrapped, sender_role="untrusted", channel="email"
                 )
                 if settings.cordia_phone_number:
-                    note = f"🏠 Naples house: {summary}"
+                    # No emoji: it is outside GSM, so it alone re-encodes the
+                    # whole note as UCS-2 and drops the segment limit from 160
+                    # characters to 70. This one goes out on every capture.
+                    note = f"Naples house: {summary}"
                     if await sms_service.send_sms(to=settings.cordia_phone_number, body=note):
                         # Only the summary reaches her thread — never the email.
                         await claude_service.record_assistant_message(

@@ -161,3 +161,104 @@ async def test_the_lock_table_stays_bounded(mocker):
         await sms._process_inbound_bg(f"+1615555{i:04d}", "hey", [])
 
     assert len(sms._INBOX_LOCKS) <= sms._MAX_TRACKED_CONVERSATIONS
+
+
+# --- the same lock, on both channels ----------------------------------------
+
+@pytest.mark.asyncio
+async def test_an_email_and_a_text_do_not_race_each_other(db, mocker):
+    """The lock lived in sms.py, so it only ever protected SMS. Cordia's inbound
+    email keys on her phone number — the SAME conversation her texts key on — so
+    a text and an email arriving together reproduced the original bug in one
+    process, with the lock sitting right there unused."""
+    from app.services import email_inbound
+    from app.config import settings
+
+    mocker.patch.object(settings, "owner_email", "cordia@example.com")
+    mocker.patch.object(settings, "cordia_phone_number", "+16157080002")
+    mocker.patch("app.services.email_service.send_email", new=mocker.AsyncMock())
+    mocker.patch("app.services.usage_service.record_email", new=mocker.AsyncMock())
+
+    concurrent = 0
+    peak = 0
+
+    async def slow_chat(*a, **kw):
+        nonlocal concurrent, peak
+        concurrent += 1
+        peak = max(peak, concurrent)
+        await asyncio.sleep(0.02)
+        concurrent -= 1
+        return "ok"
+
+    mocker.patch("app.services.claude_service.chat", new=slow_chat)
+
+    async def by_sms(db_, number, body, media):
+        await slow_chat()
+
+    mocker.patch.object(sms, "_process_inbound", new=by_sms)
+
+    await asyncio.gather(
+        sms._process_inbound_bg("+16157080002", "what should I pack", []),
+        email_inbound.process_inbound_email(
+            db, "cordia@example.com", "Africa", "and what about visas"),
+    )
+
+    assert peak == 1, f"{peak} turns ran in parallel across channels"
+
+
+@pytest.mark.asyncio
+async def test_two_emails_in_the_same_thread_are_serialised(db, mocker):
+    from app.services import email_inbound
+    from app.config import settings
+
+    mocker.patch.object(settings, "owner_email", "cordia@example.com")
+    mocker.patch("app.services.email_service.send_email", new=mocker.AsyncMock())
+    mocker.patch("app.services.usage_service.record_email", new=mocker.AsyncMock())
+
+    concurrent = 0
+    peak = 0
+
+    async def slow_chat(*a, **kw):
+        nonlocal concurrent, peak
+        concurrent += 1
+        peak = max(peak, concurrent)
+        await asyncio.sleep(0.02)
+        concurrent -= 1
+        return "ok"
+
+    mocker.patch("app.services.claude_service.chat", new=slow_chat)
+
+    await asyncio.gather(*(
+        email_inbound.process_inbound_email(db, "cordia@example.com", "Africa", note)
+        for note in ("what about visas", "and vaccinations", "and the rainy season")
+    ))
+
+    assert peak == 1
+
+
+def test_the_sms_module_shares_the_queue_rather_than_copying_it():
+    """Aliases, not copies. Two dicts would mean two locks and no protection."""
+    from app.services import turn_queue
+
+    assert sms._INBOX is turn_queue.INBOX
+    assert sms._INBOX_LOCKS is turn_queue.LOCKS
+
+
+@pytest.mark.parametrize("var", ["WEB_CONCURRENCY", "UVICORN_WORKERS", "GUNICORN_WORKERS"])
+def test_a_second_worker_is_refused_rather_than_silently_wrong(var, monkeypatch):
+    """Everything above degrades quietly under multiple processes: no error, no
+    log, just Cordia answered twice and a morning brief sent twice."""
+    from app.main import _assert_single_worker
+
+    monkeypatch.setenv(var, "2")
+    with pytest.raises(RuntimeError, match="single worker"):
+        _assert_single_worker()
+
+
+def test_one_worker_is_fine(monkeypatch):
+    from app.main import _assert_single_worker
+
+    for var in ("WEB_CONCURRENCY", "UVICORN_WORKERS", "GUNICORN_WORKERS"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("WEB_CONCURRENCY", "1")
+    _assert_single_worker()

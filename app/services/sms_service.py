@@ -13,6 +13,7 @@ import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.services.gsm import to_gsm
 from app.services import twilio_service
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,13 @@ async def send_sms(to: str, body: str, force: bool = False) -> bool:
             # A consent-lookup failure must not silently drop the message —
             # log loudly and send, rather than going quiet for an unknown reason.
             logger.error(f"Consent check failed, sending anyway: {e}")
+
+    # One em dash re-encodes the whole message as UCS-2 and drops the segment
+    # limit from 160 characters to 70. Doing this here rather than at each call
+    # site means it covers Cord's own replies too, which are the long ones —
+    # a 1,000-character research answer is seven segments in GSM and fifteen in
+    # UCS-2. Letters are never transliterated; see app/services/gsm.
+    body = to_gsm(body)
 
     if settings.sms_provider == "signalhouse":
         from app.services import signalhouse_service
