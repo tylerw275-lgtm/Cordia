@@ -267,6 +267,47 @@ async def _persist_message(
     await db.commit()
 
 
+_TOO_LONG_NUDGE = (
+    "Your last response was cut off — it hit the output limit, so anything you "
+    "were part-way through never happened. If that was a tool call, it did not "
+    "run and nothing was sent.\n\n"
+    "Do not try to produce the whole thing again in one go. Build it in pieces: "
+    "call save_project_findings for each section as you finish it, then "
+    "deliver_project once at the end. If there is no project, send what you have "
+    "with send_report_email and say plainly what is still to come."
+)
+
+_TRUNCATED_SUFFIX = (
+    "\n\n(That is as much as I could fit in one go. Say 'keep going' and I will "
+    "carry on from there.)"
+)
+
+_TOO_LONG_REPLY = (
+    "That came out longer than I can send in one piece. Say 'keep going' and I "
+    "will build it in sections."
+)
+
+
+async def _report_stop(conversation_id, stop_reason: str, actor: str | None) -> None:
+    """Make an unusual ending visible.
+
+    max_tokens, stop_sequence and refusal all used to land in one unlogged
+    branch that returned "give me a moment and ask me again if you don't hear
+    back" — which is exactly what she received, and exactly what sent her round
+    the loop again. Nothing recorded it anywhere.
+    """
+    logger.warning(f"Turn ended on stop_reason={stop_reason} (conversation {conversation_id})")
+    try:
+        from app.services import usage_service
+        await usage_service.record_error(
+            f"stop_reason:{stop_reason}",
+            RuntimeError(f"turn ended on {stop_reason}"),
+            actor=actor,
+        )
+    except Exception as e:                       # pragma: no cover - defensive
+        logger.error(f"Could not record stop_reason {stop_reason}: {e}")
+
+
 # Tools that actually put a deliverable in front of her. If the model says it is
 # sending something, one of these has to have run in the same turn — there is no
 # later in which to run it.
@@ -567,7 +608,7 @@ async def _create_with_fallback(*, tools: list[dict], web_tools: list[dict], **k
     before failing anyway.
     """
     try:
-        return await _client.messages.create(tools=tools, **kwargs), False
+        return await _request(tools=tools, **kwargs), False
     except anthropic.BadRequestError as e:
         if not web_tools:
             raise
@@ -576,7 +617,26 @@ async def _create_with_fallback(*, tools: list[dict], web_tools: list[dict], **k
             f"without them. Research is unavailable this turn: {e}"
         )
         plain = [t for t in tools if t not in web_tools]
-        return await _client.messages.create(tools=plain, **kwargs), True
+        return await _request(tools=plain, **kwargs), True
+
+
+# Above this many output tokens the SDK wants streaming: a non-streaming request
+# that takes minutes to generate hits the HTTP timeout and the whole turn is lost
+# — the failure being fixed here, arriving by a different route.
+_STREAM_ABOVE_MAX_TOKENS = 16_000
+
+
+async def _request(**kwargs):
+    """One request, streamed when the output budget is large enough to need it.
+
+    `get_final_message()` returns the same Message object `create()` would, so
+    everything downstream — stop_reason, content blocks, usage, container — is
+    identical and the loop does not care which path ran.
+    """
+    if kwargs.get("max_tokens", 0) <= _STREAM_ABOVE_MAX_TOKENS:
+        return await _client.messages.create(**kwargs)
+    async with _client.messages.stream(**kwargs) as stream:
+        return await stream.get_final_message()
 
 
 # A turn using server tools stops with pause_turn once Anthropic's internal
@@ -697,6 +757,7 @@ async def chat(
     pause_resumes = 0
     delivered = False
     nudged = False
+    truncated = False
     web_errors: list[str] = []
     research_unavailable = False
     pause_partial = ""
@@ -846,8 +907,37 @@ async def chat(
             messages.append({"role": "assistant", "content": assistant_content})
             messages.append({"role": "user", "content": tool_results})
             await _persist_message(db, conversation_id, "tool", tool_results)
+        elif response.stop_reason == "max_tokens":
+            # The output was cut off mid-sentence, or mid-tool-call — in which
+            # case the tool never ran and whatever it was going to send was
+            # never sent. This is what happened to the St Thomas plan: the
+            # deliverable did not fit, the email tool was truncated away, and
+            # she was handed a message inviting her to ask again, straight back
+            # into the same wall.
+            if not truncated:
+                truncated = True
+                logger.warning(
+                    f"Output hit max_tokens for conversation {conversation_id}; "
+                    "asking for it in parts"
+                )
+                messages.append({"role": "assistant", "content": assistant_content})
+                messages.append({"role": "user", "content": _TOO_LONG_NUDGE})
+                continue
+            # Twice is a pattern, not a hiccup. Give her what there is.
+            await _report_stop(conversation_id, "max_tokens", usage_actor)
+            partial = _extract_text(response.content)
+            return (partial + _TRUNCATED_SUFFIX) if partial else _TOO_LONG_REPLY
+
+        elif response.stop_reason == "refusal":
+            # Say so. "Give me a moment" for something that is never coming is
+            # the failure this whole section exists to stop.
+            await _report_stop(conversation_id, "refusal", usage_actor)
+            return (_extract_text(response.content)
+                    or "I can't help with that one, I'm afraid. Ask me something else?")
+
         else:
-            # Unexpected stop reason — return whatever text we have
+            # Genuinely unexpected. Every one of these used to return silently.
+            await _report_stop(conversation_id, str(response.stop_reason), usage_actor)
             return _extract_text(response.content) or _FALLBACK_REPLY
 
     logger.warning(f"Request budget exhausted for conversation {conversation_id}")
