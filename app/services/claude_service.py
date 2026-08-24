@@ -30,10 +30,24 @@ _FALLBACK_REPLY = "I'm on it - give me a moment and ask me again if you don't he
 
 
 def _extract_text(content: list) -> str:
-    for block in content:
-        if hasattr(block, "type") and block.type == "text":
-            return block.text
-    return ""
+    """Every text block in the response, in order — not just the first.
+
+    Returning the first one was right for a model that answered in a single
+    block. Opus 5 thinks by default and interleaves, so a reply comes back as
+    thinking / text / thinking / text, and taking `[0]` silently discarded
+    everything after the model's first pause. Tom asked what to do in New York
+    and received "US Open at Flushing Meadows - " with the rest of the sentence,
+    and the rest of the list, generated and thrown away.
+
+    Joined with nothing between them: the blocks are one continuous stream the
+    model has already spaced and punctuated, so anything inserted here lands in
+    the middle of its sentences.
+    """
+    parts = [
+        block.text for block in content
+        if getattr(block, "type", None) == "text" and getattr(block, "text", None)
+    ]
+    return "".join(parts).strip()
 
 
 async def get_or_create_conversation(db: AsyncSession, phone_number: str) -> Conversation:
