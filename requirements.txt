@@ -1,18 +1,26 @@
-fastapi>=0.115.0
-uvicorn[standard]>=0.32.0
-sqlalchemy[asyncio]>=2.0.0
-asyncpg>=0.30.0
-alembic>=1.14.0
-pydantic-settings>=2.7.0
-anthropic>=0.120.0
-twilio>=9.4.0
-apscheduler>=3.10.4
-python-multipart>=0.0.20
-httpx>=0.27.0
-pdfplumber>=0.11.0
-python-docx>=1.1.0
-structlog>=24.4.0
-pytest>=8.3.0
-pytest-asyncio>=0.24.0
-pytest-mock>=3.14.0
-cryptography>=41.0
+# Pinned, deliberately. Every line here used to be ">=", so each Railway
+# rebuild resolved to whatever was newest that day and production ran a
+# dependency set nothing had ever tested. That is not theoretical: this repo
+# was pinned at anthropic>=0.120.0 while a rebuild resolved 1.0.0, and
+# cryptography — which encrypts the loyalty numbers — was nine major versions
+# ahead of what the suite ran against.
+#
+# These versions are the ones `python -m pytest -q` passed on at 1,052 tests.
+# Upgrading is now a deliberate act: bump the pin, run the suite, commit the
+# result. See requirements-dev.txt for the test-only dependencies.
+
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+sqlalchemy[asyncio]==2.0.52
+asyncpg==0.31.0
+alembic==1.19.1
+pydantic-settings==2.15.0
+anthropic==1.0.0
+twilio==9.11.0
+apscheduler==3.11.3
+python-multipart==0.0.32
+httpx==0.28.1
+pdfplumber==0.11.10
+python-docx==1.2.0
+structlog==26.1.0
+cryptography==50.0.0
