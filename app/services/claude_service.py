@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.conversation import Conversation, Message
+from app.models.family import FamilyMember
 from app.prompts.intent import detect_context, is_deep_work
 from app.prompts.prompt_profiles import get_profile
 from app.prompts.system_prompt import (
@@ -581,7 +582,56 @@ async def _build_family_system(db: AsyncSession, member) -> list[dict]:
             "Cordia has asked the family for the following — work it into the conversation "
             "naturally and record what they share:\n" + "\n".join(lines)
         )
-    return build_family_system_prompt(member.name, req_text)
+    known = await _known_about(db, member)
+    return build_family_system_prompt(member.name, req_text, known)
+
+
+async def _known_about(db: AsyncSession, member) -> str:
+    """What Cord has already been told about the person it is talking to.
+
+    A family turn used to carry the member's name and nothing else, so Cord
+    started every conversation from zero and asked about things already sitting
+    in the database. Tom's interests, where he lives, his kids and what they are
+    into were all on file and none of it reached the turn.
+
+    Deliberately their own data only. No other member's details, and no stored
+    phone, email or address — the family prompt forbids reading those back, and
+    the surest way to honour that is not to put them in front of the model.
+    """
+    facts: list[str] = []
+    if getattr(member, "nickname", None):
+        facts.append(f"- Goes by {member.nickname}.")
+    if getattr(member, "relationship", None):
+        facts.append(f"- Cordia's {member.relationship}.")
+    where = ", ".join(p for p in (getattr(member, "city", None),
+                                  getattr(member, "state", None)) if p)
+    if where:
+        facts.append(f"- Lives in {where}. Useful for anything local; do not read the address back.")
+    if getattr(member, "interests", None):
+        facts.append(f"- Interests: {', '.join(member.interests)}.")
+    if getattr(member, "personality_notes", None):
+        facts.append(f"- Notes: {member.personality_notes}")
+
+    try:
+        kids = (await db.execute(
+            select(FamilyMember).where(FamilyMember.parent_id == member.id)
+        )).scalars().all()
+    except Exception:  # a missing relation must not cost them a reply
+        kids = []
+    for kid in kids:
+        bits = [b for b in (getattr(kid, "grade_level", None),
+                            ", ".join(kid.interests) if getattr(kid, "interests", None) else None)
+                if b]
+        facts.append(f"- Child: {kid.name}" + (f" ({'; '.join(bits)})." if bits else "."))
+
+    try:
+        shared = await family_circle_service.get_inputs_about(db, member.id)
+    except Exception:
+        shared = []
+    for item in list(shared)[-5:]:
+        facts.append(f"- Previously shared ({item.kind}): {item.content}")
+
+    return "\n".join(facts)
 
 
 # Roles allowed to reach the live web. Deliberately not "family" and never
