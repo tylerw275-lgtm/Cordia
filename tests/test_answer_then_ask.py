@@ -30,40 +30,83 @@ def _owner_text() -> str:
 
 # --- the rule itself ---------------------------------------------------------
 
-def test_the_owner_is_told_to_answer_before_asking():
+def test_it_is_told_to_assume_rather_than_interrogate():
+    """She said it outright: "You ask too many questions." Five questions came
+    back on "A gift for Amber?" — an ask that carries no playbook and is not
+    deep work, so the model had chosen the project interview for itself."""
     text = _owner_text()
 
-    assert "SMALL ASKS: ANSWER, THEN ASK" in text
-    assert "Lead with the answer, not the questions." in text
+    assert "ASSUME, DELIVER, THEN OFFER TO ADJUST" in text
+    assert "WORK OUT THE MOST LIKELY READING, DO THE WORK, AND SAY WHAT YOU ASSUMED" in text
 
 
-def test_two_questions_is_the_ceiling():
-    assert "at most TWO questions" in _owner_text()
+def test_a_splitting_choice_is_answered_both_ways_not_asked():
+    """Object or experience, her bed or the guest rooms — cover both."""
+    text = _owner_text()
+
+    assert "WHERE A CHOICE WOULD SPLIT THE ANSWER, COVER BOTH SIDES INSTEAD OF ASKING" in text
 
 
-def test_questions_are_an_offer_not_a_gate():
-    """A follow-up that ignores them must not stall waiting for answers."""
-    assert "They are an offer, not a gate." in _owner_text()
+def test_one_optional_additive_question_is_the_ceiling():
+    text = _owner_text()
+
+    assert "At most ONE question" in text
+    assert "ADD something rather than unblock you" in text
+
+
+def test_it_must_never_end_a_turn_having_only_asked():
+    text = _owner_text()
+
+    assert "NEVER end a turn having only asked." in text
+    assert "a good answer to the likely question beats no answer to the exact one" in text
+
+
+def test_an_answer_from_her_finishes_the_work_in_that_turn():
+    """She sent "$200" and got nothing back at all."""
+    assert 'She said "$200" and got nothing back' in _owner_text()
+
+
+def test_assumptions_are_named_as_levers_not_asked_about():
+    assert "Close by naming the levers, not by asking about them" in _owner_text()
+
+
+def test_defaults_are_applied_silently():
+    text = _owner_text()
+
+    assert "a gift runs $100-200 unless she says otherwise" in text
+    assert "6,800 sq ft with four bedrooms" in text
 
 
 def test_it_still_must_not_ask_what_it_could_look_up():
-    """The existing discipline has to survive the new mode."""
+    """The existing discipline has to survive the rewrite."""
+    assert "Never ask what you could find out yourself" in _owner_text()
+
+
+# --- the project interview must stop swallowing ordinary asks ----------------
+
+def test_a_project_is_not_merely_something_that_needs_research():
+    """"A gift for Amber?" routes to no playbook and is not deep work, yet
+    produced a five-question interview — the model selected project mode
+    itself, and the old wording invited it."""
     text = _owner_text()
 
-    assert "Never ask what you could find out yourself" in text
-    assert "that is your job, not theirs" in text
+    assert "It is NOT for anything that merely needs research" in text
+    assert "If you could deliver something useful in this turn, it is not a project" in text
 
 
-def test_the_project_interview_is_fenced_as_the_exception():
-    """Two contradictory instructions reaching the model in one turn is a bug
-    this codebase has already had once. The project rule now names itself as
-    the exception and says when it applies."""
+def test_even_a_project_delivers_before_it_asks():
     text = _owner_text()
 
-    assert "This is the exception to ANSWER, THEN ASK above" in text
-    assert "only once start_project has fired" in text
-    # and the project path still keeps its own shape
-    assert "Send the questions as ONE numbered text" in text
+    assert "deliver a first pass before you ask anything" in text
+    assert "always alongside the first pass — never instead of it" in text
+
+
+def test_nothing_tells_it_to_stop_and_wait_any_more():
+    """The instruction that produced a questionnaire with no work attached."""
+    text = _owner_text()
+
+    assert "stop and wait" not in text
+    assert "Do not answer the request in the same message" not in text
 
 
 def test_family_gets_the_same_rule():

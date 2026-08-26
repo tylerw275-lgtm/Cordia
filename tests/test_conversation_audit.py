@@ -401,3 +401,44 @@ async def test_the_page_names_tom_on_toms_thread(db, signed_in):
     for wrong in ("what she did next", "How she uses it", ">HER<",
                   "she answered", "she did not answer", "She pushed back"):
         assert wrong not in r.text
+
+
+# --- a proactive send is not a reply -----------------------------------------
+
+def test_the_morning_brief_is_not_counted_as_an_answer():
+    """Her "$200" showed "[ok] · 23.8h later" — the reply was the next day's
+    morning brief, written into the same conversation by
+    record_assistant_message. She had in fact received nothing, which is the
+    thing worth seeing and exactly what this hid."""
+    t0 = datetime(2026, 8, 24, 13, 29, tzinfo=timezone.utc)
+    ex = audit.build_exchanges([
+        {"role": "user", "content": "$200", "created": t0},
+        {"role": "assistant", "content": "Good morning! Here's your day (Wed Aug 26)",
+         "created": t0 + timedelta(hours=23.8)},
+    ], "Cordia")[0]
+
+    assert ex["verdict"] == "NO REPLY AT ALL"
+    assert ex["took"] == ""
+
+
+def test_a_reply_inside_the_window_still_counts():
+    t0 = datetime(2026, 8, 24, 13, 29, tzinfo=timezone.utc)
+    ex = audit.build_exchanges([
+        {"role": "user", "content": "$200", "created": t0},
+        {"role": "assistant", "content": "Here are three at $200.",
+         "created": t0 + timedelta(minutes=3)},
+    ], "Cordia")[0]
+
+    assert ex["verdict"] == "ok"
+
+
+def test_deep_research_still_has_room_to_finish():
+    """A long tool-using turn must not be mistaken for a proactive send."""
+    t0 = datetime(2026, 8, 24, 13, 29, tzinfo=timezone.utc)
+    ex = audit.build_exchanges([
+        {"role": "user", "content": "Find me flights", "created": t0},
+        {"role": "assistant", "content": "Three options, cheapest $214.",
+         "created": t0 + timedelta(minutes=12)},
+    ], "Cordia")[0]
+
+    assert ex["verdict"] == "ok"
