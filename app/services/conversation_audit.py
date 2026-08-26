@@ -168,16 +168,31 @@ def build_exchanges(messages: list[dict]) -> list[dict]:
     pairs, prev_cord, prev_her = [], "", ""
     for i, m in enumerate(messages):
         if m.get("role") != "user":
-            prev_cord = text_of(m.get("content", ""))
             continue
         her = text_of(m.get("content", ""))
-        reply, reply_at = "", None
+
+        # A turn that used tools writes several rows: assistant[tool_use] →
+        # tool[results] → … → assistant[the answer]. Stopping at the first one
+        # reported "NO REPLY AT ALL" for every turn that did any work, which is
+        # exactly the turns worth reading. Walk to the next thing she said,
+        # keeping the last assistant text — that is the one she was actually
+        # sent, since the loop returns only its final text.
+        reply, reply_at, rounds = "", None, 0
         for nxt in messages[i + 1:]:
-            if nxt.get("role") == "assistant":
-                reply, reply_at = text_of(nxt.get("content", "")), nxt.get("created")
-            break
+            role = nxt.get("role")
+            if role == "user":
+                break
+            if role != "assistant":
+                continue          # tool results are not something Cord said
+            spoken = text_of(nxt.get("content", ""))
+            if spoken:
+                reply, reply_at = spoken, nxt.get("created")
+            else:
+                rounds += 1       # an assistant turn that only called tools
+
         pairs.append({
             "at": m.get("created"), "her": her, "cord": reply, "cord_at": reply_at,
+            "rounds": rounds,
             "prof": profile_ask(her, prev_cord, prev_her),
             "verdict": classify_reply(reply) if reply else "NO REPLY AT ALL",
             "cord_asked": reply.strip().endswith("?"),
@@ -190,6 +205,38 @@ def build_exchanges(messages: list[dict]) -> list[dict]:
         gap = gap_text(p["at"], pairs[n + 1]["at"]) if n + 1 < len(pairs) else ""
         p["signal_kind"], p["signal"] = signal(nxt, gap)
     return pairs
+
+
+def mark_delivery(exchanges: list[dict], sent_at: list, window_s: int = 900) -> None:
+    """Flag replies that were written but never actually reached her.
+
+    An assistant row is persisted whether or not the text ever left the
+    building. During the days the app was half-deployed, replies were composed,
+    stored, and never sent — so the audit showed a tidy answer to a message
+    that got silence. `sms_service.send_sms` records an `sms_out` usage event
+    only after a real send, which makes that ledger the honest record of what
+    was delivered.
+
+    No ledger rows at all means the ledger is not usable here (an email thread,
+    or a window before billing was recorded); the flag is left alone rather
+    than accusing every reply of never arriving.
+    """
+    if not sent_at:
+        return
+    stamps = sorted(t for t in (_dt(x) for x in sent_at) if t)
+    if not stamps:
+        return
+    import bisect
+    for ex in exchanges:
+        made = _dt(ex.get("cord_at"))
+        if not ex.get("cord") or not made:
+            continue
+        i = bisect.bisect_left(stamps, made)
+        near = any((stamps[j] - made).total_seconds() <= window_s
+                   for j in (i, i - 1) if 0 <= j < len(stamps)
+                   and (stamps[j] - made).total_seconds() >= -window_s)
+        if not near:
+            ex["verdict"] = "NEVER SENT — written but not delivered"
 
 
 def summarise(exchanges: list[dict]) -> dict:
