@@ -529,3 +529,92 @@ def test_a_reply_after_the_ledger_started_is_still_judged():
     audit.mark_delivery(ex, [datetime(2026, 8, 21, 19, 35, tzinfo=timezone.utc)])
 
     assert ex[0]["verdict"] == "NEVER SENT — written but not delivered"
+
+
+# --- filtering by person ------------------------------------------------------
+
+@pytest_asyncio.fixture
+async def three_threads(db):
+    """Cordia and Tom are principals; the third number is nobody on file."""
+    from app.models.authorized_user import AuthorizedUser
+
+    db.add_all([
+        AuthorizedUser(name="Cordia Harrington", phone="+16153005400", is_owner=True),
+        AuthorizedUser(name="Tom Harrington", phone="+16157080001", is_owner=False),
+    ])
+    t0 = datetime(2026, 8, 24, 12, 0, tzinfo=timezone.utc)
+    for phone, said in (("+16153005400", "A gift for Amber?"),
+                        ("+16157080001", "Suggest something to do"),
+                        ("+16158539483", "Trip to Quebec")):
+        conv = Conversation(phone_number=phone)
+        db.add(conv)
+        await db.commit()
+        await db.refresh(conv)
+        db.add_all([
+            Message(conversation_id=conv.id, role="user", content=said, created_at=t0),
+            Message(conversation_id=conv.id, role="assistant",
+                    content="Here you go.", created_at=t0 + timedelta(seconds=10)),
+        ])
+    await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_a_chip_appears_for_each_principal_plus_other(db, three_threads, signed_in):
+    """Built from who is actually in the data — a hardcoded roster would list
+    people with no conversations and go stale the moment one is added."""
+    r = await signed_in.get("/health/conversations")
+
+    assert 'href="/health/conversations?show=Cordia"' in r.text
+    assert 'href="/health/conversations?show=Tom"' in r.text
+    assert 'href="/health/conversations?show=Other"' in r.text
+    assert ">All <" in r.text
+
+
+@pytest.mark.asyncio
+async def test_choosing_a_person_hides_everyone_else(db, three_threads, signed_in):
+    r = await signed_in.get("/health/conversations?show=Cordia")
+
+    assert "A gift for Amber?" in r.text
+    assert "Suggest something to do" not in r.text
+    assert "Trip to Quebec" not in r.text
+
+
+@pytest.mark.asyncio
+async def test_other_collects_everyone_who_is_not_a_principal(db, three_threads, signed_in):
+    r = await signed_in.get("/health/conversations?show=Other")
+
+    assert "Trip to Quebec" in r.text
+    assert "A gift for Amber?" not in r.text
+
+
+@pytest.mark.asyncio
+async def test_no_filter_shows_all_of_them(db, three_threads, signed_in):
+    r = await signed_in.get("/health/conversations")
+
+    for said in ("A gift for Amber?", "Suggest something to do", "Trip to Quebec"):
+        assert said in r.text
+
+
+@pytest.mark.asyncio
+async def test_the_chosen_chip_is_marked_active(db, three_threads, signed_in):
+    r = await signed_in.get("/health/conversations?show=Tom")
+
+    assert 'class="chip on" href="/health/conversations?show=Tom"' in r.text
+
+
+@pytest.mark.asyncio
+async def test_a_name_with_no_conversations_says_so_rather_than_looking_broken(
+        db, three_threads, signed_in):
+    r = await signed_in.get("/health/conversations?show=Nobody")
+
+    assert r.status_code == 200
+    assert "Nobody by that name has a conversation" in r.text
+
+
+@pytest.mark.asyncio
+async def test_the_filter_keeps_the_other_narrowing_you_had(db, three_threads, signed_in):
+    """Choosing a person must not silently discard a ?since= you were using."""
+    r = await signed_in.get("/health/conversations?since=2026-08-01")
+
+    assert "show=Cordia&amp;since=2026-08-01" in r.text or \
+           "show=Cordia&since=2026-08-01" in r.text

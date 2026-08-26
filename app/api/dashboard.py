@@ -861,7 +861,8 @@ one thing without giving standing access, she asks Cord to let them know.</div>
 
 
 @router.get("/conversations", include_in_schema=False)
-async def conversations_audit(request: Request, phone: str = "", since: str = "") -> HTMLResponse:
+async def conversations_audit(request: Request, phone: str = "", since: str = "",
+                              show: str = "") -> HTMLResponse:
     """Every exchange, and what happened next.
 
     The same judgement as scripts/audit_conversations.py, on a page — because
@@ -885,7 +886,7 @@ async def conversations_audit(request: Request, phone: str = "", since: str = ""
             from app.services import principal_service
             from app.utils.phone import normalize_phone
 
-            names_by_phone, names_by_email = {}, {}
+            names_by_phone, names_by_email, principal_names = {}, {}, set()
             for m in (await db.execute(select(FamilyMember))).scalars():
                 if (k := normalize_phone(m.phone or "")):
                     names_by_phone[k] = m.name
@@ -896,6 +897,7 @@ async def conversations_audit(request: Request, phone: str = "", since: str = ""
                     names_by_phone[k] = person.name
                 if person.email:
                     names_by_email[person.email.strip().lower()] = person.name
+                principal_names.add(person.name.split()[0])
 
             convs = (await db.execute(
                 select(Conversation).order_by(Conversation.updated_at.desc())
@@ -931,7 +933,9 @@ async def conversations_audit(request: Request, phone: str = "", since: str = ""
                     "WHERE event_type = 'sms_out' AND actor = :who"
                 ), {"who": conv.phone_number})).scalars().all()
                 audit.mark_delivery(exchanges, list(sent))
-                threads.append((conv, exchanges, audit.summarise(exchanges), who))
+                # Principals get a chip of their own; everyone else shares one.
+                bucket = who if who in principal_names else "Other"
+                threads.append((conv, exchanges, audit.summarise(exchanges), who, bucket))
     except Exception as e:  # a reporting page must never be the thing that breaks
         logger.error(f"Conversation audit failed: {e}")
         err = str(e)
@@ -941,13 +945,40 @@ async def conversations_audit(request: Request, phone: str = "", since: str = ""
                 f'<div class="ex-meta">{_escape(meta)}</div>'
                 f'<div class="ex-body">{_escape(body) or "<em>(nothing)</em>"}</div></div>')
 
-    body = ""
+    # The chips come from whoever is actually in the data — no hardcoded roster
+    # to fall out of date, and a name with no conversations never appears.
+    counts: dict[str, int] = {}
+    for _c, _e, _s, _w, _b in threads:
+        counts[_b] = counts.get(_b, 0) + len(_e)
+    order = sorted(k for k in counts if k != "Other") + (["Other"] if "Other" in counts else [])
+
+    def _chip(label: str, value: str, n: int) -> str:
+        params = [f"show={value}"] if value else []
+        if phone:
+            params.append(f"phone={phone}")
+        if since:
+            params.append(f"since={since}")
+        qs = ("?" + "&".join(params)) if params else ""
+        live = " on" if (show or "") == value else ""
+        return (f'<a class="chip{live}" href="/health/conversations{qs}">'
+                f'{_escape(label)} <span class="chip-n">{n}</span></a>')
+
+    chips = _chip("All", "", sum(counts.values()))
+    for name in order:
+        chips += _chip(name, name, counts[name])
+
+    body = f'<div class="chips">{chips}</div>' if counts else ""
+    if show and show not in counts:
+        body += ('<div class="note">Nobody by that name has a conversation. '
+                 'Showing nothing — pick another above.</div>')
     if err:
         body += f'<div class="err">Could not read the conversations: {_escape(err)}</div>'
     if not threads and not err:
         body += '<div class="note">No conversations in this window.</div>'
 
-    for conv, exchanges, s, who in threads:
+    for conv, exchanges, s, who, bucket in threads:
+        if show and show != bucket:
+            continue
         body += (f'<div class="card"><h2>{_escape(_format_phone(conv.phone_number))}</h2>'
                  f'<div class="sub">{s["exchanges"]} exchanges</div>')
 
@@ -1022,6 +1053,14 @@ async def conversations_audit(request: Request, phone: str = "", since: str = ""
 .profile h3{{font-size:.85rem;text-transform:uppercase;letter-spacing:.06em;
   color:#6b7280;margin:16px 0 6px}}
 .profile ul{{margin:0;padding-left:18px;font-size:.9rem;line-height:1.7}}
+.chips{{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 20px}}
+.chip{{display:inline-flex;align-items:center;gap:7px;padding:7px 14px;border-radius:99px;
+  border:1px solid #d7dbe0;background:#fff;color:#1a1d21;text-decoration:none;
+  font-size:.88rem;font-weight:600}}
+.chip:hover{{border-color:#1a6b3c;color:#1a6b3c}}
+.chip.on{{background:#1a6b3c;border-color:#1a6b3c;color:#fff}}
+.chip-n{{font-weight:600;font-size:.78rem;opacity:.7}}
+.chip.on .chip-n{{opacity:.85}}
 </style></head><body><div class="wrap">
 <h1 style="font-size:1.25rem;margin:0 0 4px">Conversations</h1>
 <div class="sub" style="margin-bottom:20px">
