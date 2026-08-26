@@ -1,27 +1,33 @@
 #!/usr/bin/env python3
-"""Read the stored conversations and say what actually went wrong in them.
+"""Every exchange she had with Cord: what she asked, what came back, what happened next.
 
-"It doesn't work right" is a report about an experience, not a diagnosis. This
-separates the two things that produce it:
+The question this answers is not "did it error" — it is "did she get what she
+wanted, and if not, where did the ask and the answer miss each other." So the
+output is the conversation itself, in order, with three things attached to each
+exchange:
 
-  1. Replies Cord got wrong — truncated, failed, or promised and never
-     delivered. These have exact fingerprints in the stored text.
-  2. How the ask was phrased — one-liners with no dates, places or names give
-     the model nothing to work with, and questions that never get answered
-     leave it guessing.
+  HER     what she typed, and what the ask actually carried — was it open-ended
+          or constrained, did it name a date, a place, a number, a budget, was
+          it a fresh topic or a follow-up, and did it answer what Cord just asked
+  CORD    what came back, how long it took, whether it offered options or asked
+          a question, and whether the reply itself was sound or cut short
+  SIGNAL  what she did next, which is the only honest measure of whether the
+          answer landed: rephrased the same ask, corrected it, narrowed it,
+          pushed back, or moved on satisfied
 
-Both are real, and blaming the second for the first is how a client gets told
-they are using it wrong when they are not. So the report dates every finding:
-anything before a fix shipped belongs to the bug, not the person.
+The style profile at the end is built from those, not from impressions. It says
+how she actually uses it: how much she puts in an opening ask, whether she
+answers questions put to her, how many turns a topic takes before it lands or
+she drops it.
 
-Defaults to counts and classifications, never the message text — this is
-somebody's private correspondence with their assistant. Pass --verbatim when
-you actually need to read it.
+Reply health is still labelled, because a rephrase after a truncated answer
+means something different from a rephrase after a complete one — you cannot read
+her behaviour without knowing what she was reacting to.
 
 Usage:
-    ADMIN_API_SECRET=... python scripts/audit_conversations.py
-    ADMIN_API_SECRET=... python scripts/audit_conversations.py --phone +1615... --since 2026-08-22
-    python scripts/audit_conversations.py --file dump.json --verbatim
+    ADMIN_API_SECRET=... python scripts/audit_conversations.py --since 2026-08-20
+    python scripts/audit_conversations.py --file conversations-dump.json --phone +1615...
+    python scripts/audit_conversations.py --file dump.json --summary-only
 """
 from __future__ import annotations
 
@@ -31,42 +37,47 @@ import os
 import re
 import sys
 from collections import Counter
-from datetime import datetime, timezone
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from datetime import datetime
 
 DEFAULT_URL = "https://cordia.aigenpartners.com"
 
-# Fixes that changed what a reply looks like. A complaint dated before one of
-# these is evidence about the bug, not about the person typing.
 FIXES = [
-    ("2026-08-22T09:41Z", "Opus 5 went live"),
-    ("2026-08-22T10:34Z", "parsed_output 400 fixed (turns died outright before this)"),
-    ("2026-08-24T09:35Z", "reply truncation fixed (every answer cut at the first pause before this)"),
-    ("2026-08-24T09:52Z", "answer-then-ask added"),
+    ("2026-08-22T09:41", "Opus 5 live"),
+    ("2026-08-22T10:34", "parsed_output 400 fixed"),
+    ("2026-08-24T09:35", "reply truncation fixed"),
+    ("2026-08-24T09:52", "answer-then-ask live"),
 ]
 
 FALLBACK = "I'm on it - give me a moment and ask me again if you don't hear back."
 FAILED = "Something went wrong on my end"
-PROMISE = re.compile(
-    r"\b(sending|send it|get it to you|in your inbox|shortly|in a (?:minute|moment|sec)|"
-    r"almost done|working on it|let me finish|right now)\b", re.I)
+PROMISE = re.compile(r"\b(sending|send it|get it to you|in your inbox|shortly|"
+                     r"in a (?:minute|moment|sec)|almost done|let me finish|right now)\b", re.I)
 
-# Signals that an ask carried something to work with.
 HAS_DATE = re.compile(
     r"\b(\d{1,2}/\d{1,2}|\d{4}-\d{2}-\d{2}"
-    # Full or abbreviated month names only — "oct[a-z]*" also matched "Octopus".
     r"|(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|jun(?:e)?|jul(?:y)?"
     r"|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
     r"|monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|tomorrow|tonight"
     r"|this (?:week|weekend|month)|next (?:week|weekend|month))\b", re.I)
 HAS_NUMBER = re.compile(r"\b\d+\b")
-HAS_MONEY = re.compile(r"[$£€]\s?\d|budget|per night|per person")
-HAS_PROPER = re.compile(r"(?<![.!?]\s)(?<!^)\b[A-Z][a-z]{2,}\b")  # a name or place mid-sentence
+HAS_MONEY = re.compile(r"[$£€]\s?\d|budget|per night|per person|under \d")
+HAS_PROPER = re.compile(r"(?<!^)(?<![.!?]\s)\b[A-Z][a-z]{2,}\b")
+HAS_PEOPLE = re.compile(r"\b(me and|my |our |for \d+ (?:people|of us)|kids|family|everyone|"
+                        r"tom|karie|cordia)\b", re.I)
+
+# What she does when an answer misses.
+CORRECTION = re.compile(r"\b(no,|not what|i meant|actually|instead|rather|i said|"
+                        r"that'?s not|wrong)\b", re.I)
+# The trailing \b cannot match after "?", so those alternatives sit outside it.
+PUSHBACK = re.compile(r"\b(didn'?t get|never (?:got|came)|still (?:waiting|nothing)|"
+                      r"any(?:thing)? else|nothing|you there|anyone there)\b"
+                      r"|hello\s*\?|^\s*\?+\s*$|\?\?", re.I)
+STOPWORDS = set("a an the and or but of for to in on at is are was were be been with my "
+                "our me i you it this that some any can could would please need want "
+                "get got give find make do does help about from by as we us".split())
 
 
 def _txt(content: str) -> str:
-    """Stored content is plain text or a JSON list of blocks."""
     if not content.lstrip().startswith("["):
         return content
     try:
@@ -76,128 +87,223 @@ def _txt(content: str) -> str:
     if not isinstance(blocks, list):
         return content
     return " ".join(b.get("text", "") for b in blocks
-                    if isinstance(b, dict) and b.get("type") == "text")
+                    if isinstance(b, dict) and b.get("type") == "text").strip()
+
+
+def _keywords(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z]{3,}", text.lower()) if w not in STOPWORDS}
+
+
+def _overlap(a: str, b: str) -> float:
+    ka, kb = _keywords(a), _keywords(b)
+    return len(ka & kb) / len(ka | kb) if (ka or kb) else 0.0
+
+
+def _when(stamp: str) -> datetime | None:
+    try:
+        return datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return None
+
+
+def _gap(a: str, b: str) -> str:
+    ta, tb = _when(a), _when(b)
+    if not ta or not tb:
+        return ""
+    secs = (tb - ta).total_seconds()
+    if secs < 90:
+        return f"{int(secs)}s later"
+    if secs < 5400:
+        return f"{int(secs // 60)}m later"
+    if secs < 172800:
+        return f"{secs / 3600:.1f}h later"
+    return f"{int(secs // 86400)}d later"
 
 
 def classify_reply(text: str) -> str:
     t = text.strip()
     if not t:
-        return "empty"
+        return "EMPTY"
     if FALLBACK in t:
-        return "fallback (model produced no text)"
+        return "FALLBACK — model produced no text"
     if FAILED in t:
-        return "turn died (error reply)"
-    # Truncation fingerprint: stops where a list or a sentence should continue.
-    if t.endswith((":", "-", "—", ",", ";")) or (t[-1].isalnum() and len(t) > 40):
-        return "cut off mid-thought"
+        return "DIED — error reply"
+    if t.endswith((":", "-", "—", ",", ";")) or (len(t) > 40 and t[-1].isalnum()):
+        return "CUT OFF mid-thought"
     if PROMISE.search(t):
-        return "promised a delivery"
+        return "PROMISED a delivery"
     return "ok"
 
 
-def profile_ask(text: str) -> dict:
+def profile_ask(text: str, prev_cord: str, prev_her: str) -> dict:
     words = text.split()
+    carried = [name for name, rx in (("date", HAS_DATE), ("number", HAS_NUMBER),
+                                     ("budget", HAS_MONEY), ("place/name", HAS_PROPER),
+                                     ("who's coming", HAS_PEOPLE)) if rx.search(text)]
+    asked_of_her = prev_cord.strip().endswith("?")
     return {
-        "chars": len(text),
         "words": len(words),
-        "one_liner": len(words) <= 12,
-        "has_date": bool(HAS_DATE.search(text)),
-        "has_number": bool(HAS_NUMBER.search(text)),
-        "has_money": bool(HAS_MONEY.search(text)),
-        "has_name_or_place": bool(HAS_PROPER.search(text)),
-        "is_question": text.strip().endswith("?"),
+        "carried": carried,
+        "open_ended": not carried,
+        "answered_cord": asked_of_her and len(words) > 3 and not PUSHBACK.search(text),
+        "ignored_cord": asked_of_her and (len(words) <= 3 or bool(PUSHBACK.search(text))),
+        "correcting": bool(CORRECTION.search(text)),
+        "pushing_back": bool(PUSHBACK.search(text)),
+        "rephrase": _overlap(prev_her, text) > 0.34 if prev_her else False,
     }
+
+
+def _signal(nxt_prof: dict | None, gap: str) -> tuple[str, str]:
+    """(kind, line). The kind aggregates; the line is what you read."""
+    if nxt_prof is None:
+        return "topic ended here", "no further message — topic ended here"
+    if nxt_prof["pushing_back"]:
+        return ("pushed back — the answer did not land",
+                f"SHE PUSHED BACK {gap} — the answer did not land")
+    if nxt_prof["correcting"]:
+        return ("corrected it — Cord solved the wrong problem",
+                f"SHE CORRECTED IT {gap} — Cord solved the wrong problem")
+    if nxt_prof["rephrase"]:
+        return ("asked again — same ask, reworded",
+                f"SHE ASKED AGAIN {gap} — same ask, reworded")
+    if nxt_prof["ignored_cord"]:
+        return ("Cord asked, she did not answer",
+                f"CORD ASKED, SHE DID NOT ANSWER {gap}")
+    if nxt_prof["answered_cord"]:
+        return "answered Cord's question", f"she answered Cord's question {gap}"
+    quiet = (gap.endswith("d later")
+             or (gap.endswith("h later") and float(gap.split("h")[0]) >= 6))
+    if quiet:
+        return ("went quiet", f"SHE WENT QUIET — nothing more for {gap.replace(' later','')}")
+    return "moved on", f"she moved on {gap}"
 
 
 def _fetch(url: str, secret: str) -> list[dict]:
     import httpx
-    headers = {"X-Admin-Secret": secret}
-    with httpx.Client(timeout=60.0, headers=headers) as c:
+    with httpx.Client(timeout=60.0, headers={"X-Admin-Secret": secret}) as c:
         convs = c.get(f"{url}/api/v1/conversations").raise_for_status().json()["conversations"]
         out = []
         for conv in convs:
-            msgs = c.get(f"{url}/api/v1/conversations/{conv['id']}/messages")
-            out.append({**conv, "messages": msgs.raise_for_status().json()["messages"]})
+            r = c.get(f"{url}/api/v1/conversations/{conv['id']}/messages").raise_for_status()
+            out.append({**conv, "messages": r.json()["messages"]})
     return out
 
 
-def report(convs: list[dict], phone: str, since: str, verbatim: bool) -> None:
-    replies, asks, broken, unanswered = Counter(), [], [], 0
-    total_msgs = 0
+def run(convs, phone, since, summary_only, width):
+    style, replies, signals = Counter(), Counter(), Counter()
+    ask_words, topic_turns, exchanges = [], [], 0
 
     for conv in convs:
-        if phone and phone[-10:] not in (conv.get("phone") or ""):
+        if phone and phone[-10:] not in re.sub(r"\D", "", conv.get("phone") or ""):
             continue
-        msgs = conv.get("messages", [])
+        msgs = [m for m in conv.get("messages", [])
+                if not since or (m.get("created") or "") >= since]
+        if not msgs:
+            continue
+
+        print(f"\n{'='*width}\n{conv.get('phone','?')}   {len(msgs)} messages\n{'='*width}")
+
+        # Pair each of her messages with the reply that followed it.
+        pairs, prev_cord, prev_her = [], "", ""
         for i, m in enumerate(msgs):
-            when = m.get("created", "")
-            if since and when < since:
+            if m["role"] != "user":
+                prev_cord = _txt(m.get("content", ""))
                 continue
             text = _txt(m.get("content", ""))
-            total_msgs += 1
-            if m["role"] == "user":
-                asks.append(profile_ask(text))
-                if verbatim:
-                    print(f"  [{when[:16]}] HER: {text[:400]}")
-            else:
-                verdict = classify_reply(text)
-                replies[verdict] += 1
-                if verdict != "ok":
-                    broken.append((when, verdict, text[:160]))
-                # Cord asked something and she moved on without answering.
-                if text.strip().endswith("?") and i + 1 < len(msgs):
-                    nxt = _txt(msgs[i + 1].get("content", ""))
-                    if msgs[i + 1]["role"] == "user" and len(nxt.split()) <= 3:
-                        unanswered += 1
-                if verbatim:
-                    print(f"  [{when[:16]}] CORD [{verdict}]: {text[:400]}")
+            reply, reply_at = "", ""
+            for nxt in msgs[i + 1:]:
+                if nxt["role"] == "assistant":
+                    reply, reply_at = _txt(nxt.get("content", "")), nxt.get("created", "")
+                    break
+                break
+            pairs.append({"at": m.get("created", ""), "her": text, "cord": reply,
+                          "cord_at": reply_at,
+                          "prof": profile_ask(text, prev_cord, prev_her)})
+            prev_her, prev_cord = text, reply
 
-    print("\n" + "=" * 68)
-    print(f"{total_msgs} messages across {len(convs)} conversation(s)")
-    print("=" * 68)
+        run_len = 0
+        for n, p in enumerate(pairs):
+            prof = p["prof"]
+            nxt = pairs[n + 1]["prof"] if n + 1 < len(pairs) else None
+            gap = _gap(p["at"], pairs[n + 1]["at"]) if n + 1 < len(pairs) else ""
+            verdict = classify_reply(p["cord"]) if p["cord"] else "NO REPLY AT ALL"
+            kind, sig = _signal(nxt, gap)
 
-    print("\nWHAT CORD SENT BACK")
-    total_replies = sum(replies.values()) or 1
-    for verdict, n in replies.most_common():
-        print(f"  {n:4d}  {n/total_replies:5.1%}  {verdict}")
+            exchanges += 1
+            ask_words.append(prof["words"])
+            replies[verdict] += 1
+            signals[kind] += 1
+            for tag in ("open_ended", "correcting", "pushing_back", "rephrase",
+                        "answered_cord", "ignored_cord"):
+                if prof[tag]:
+                    style[tag] += 1
+            run_len += 1
+            if nxt is None or not (nxt["rephrase"] or nxt["correcting"] or nxt["pushing_back"]):
+                topic_turns.append(run_len)
+                run_len = 0
 
-    if broken:
-        print("\nWHEN THE BROKEN ONES HAPPENED — against the fixes")
+            if summary_only:
+                continue
+
+            carried = ", ".join(prof["carried"]) or "nothing specific"
+            print(f"\n{'─'*width}\n  #{n+1}   {p['at'][:16].replace('T',' ')}")
+            print(f"\n  HER  ({prof['words']} words · carried: {carried}"
+                  f"{' · OPEN-ENDED' if prof['open_ended'] else ''})")
+            for line in (p["her"] or "(empty)").splitlines() or [""]:
+                print(f"     {line}")
+            took = _gap(p["at"], p["cord_at"]) if p["cord_at"] else ""
+            print(f"\n  CORD  [{verdict}]{'  ·  ' + took if took else ''}"
+                  f"{'  · asked her something' if p['cord'].strip().endswith('?') else ''}")
+            for line in (p["cord"] or "(nothing came back)").splitlines() or [""]:
+                print(f"     {line}")
+            print(f"\n  → {sig}")
+
+    # ---- style profile -----------------------------------------------------
+    n = exchanges or 1
+    print(f"\n\n{'='*width}\nHOW SHE USES IT   ({exchanges} exchanges)\n{'='*width}")
+    if ask_words:
+        srt = sorted(ask_words)
+        print(f"\n  ask length      median {srt[len(srt)//2]} words, "
+              f"shortest {srt[0]}, longest {srt[-1]}")
+    print(f"  {style['open_ended']/n:6.1%}  open-ended — no date, number, budget, place or people")
+    print(f"  {style['rephrase']/n:6.1%}  re-asked something she had already asked")
+    print(f"  {style['correcting']/n:6.1%}  corrected Cord — it solved the wrong problem")
+    print(f"  {style['pushing_back']/n:6.1%}  pushed back — nothing arrived, or not what she meant")
+    answered, ignored = style["answered_cord"], style["ignored_cord"]
+    if answered + ignored:
+        print(f"\n  Cord asked her something {answered+ignored}× — "
+              f"she answered {answered}, skipped {ignored}")
+    else:
+        print("\n  Cord never asked her a question. That is the finding.")
+    if topic_turns:
+        print(f"  topics took a median of {sorted(topic_turns)[len(topic_turns)//2]} "
+              f"exchanges (longest {max(topic_turns)})")
+
+    print(f"\n{'─'*width}\n  WHAT CAME BACK")
+    for verdict, c in replies.most_common():
+        print(f"  {c:4d}  {c/n:6.1%}  {verdict}")
+    bad = sum(c for v, c in replies.items() if v != "ok")
+    if bad:
+        print(f"\n  {bad} of {n} replies were not sound. Fixes shipped at:")
         for stamp, label in FIXES:
-            n = sum(1 for w, _, _ in broken if w and w < stamp)
-            print(f"  {n:4d} before {stamp}  {label}")
-        print("\n  most recent bad replies:")
-        for when, verdict, snippet in sorted(broken)[-8:]:
-            print(f"    [{when[:16]}] {verdict}: {snippet!r}")
+            print(f"     {stamp}  {label}")
+        print("  A rephrase after a cut-off reply is Cord's doing; after a sound one it is a miss.")
 
-    if asks:
-        n = len(asks)
-        print(f"\nHOW SHE ASKS  ({n} messages)")
-        print(f"  median length          {sorted(a['words'] for a in asks)[n//2]} words")
-        for key, label in (("one_liner", "12 words or fewer"),
-                           ("has_date", "names a date or day"),
-                           ("has_name_or_place", "names a person or place"),
-                           ("has_number", "includes a number"),
-                           ("has_money", "mentions budget or price")):
-            hits = sum(1 for a in asks if a[key])
-            print(f"  {hits/n:5.1%}  {label}")
-        print(f"\n  Cord asked a question and got a non-answer: {unanswered}×")
-
-    print("\nREAD IT THIS WAY")
-    print("  Rows above the newest fix line are Cord's fault, not hers. Only the")
-    print("  'HOW SHE ASKS' block and the unanswered-question count say anything")
-    print("  about prompting — and a one-liner is only a problem if Cord failed")
-    print("  to ask the follow-up, which is what answer-then-ask now does.\n")
+    print(f"\n{'─'*width}\n  WHAT SHE DID NEXT")
+    for sig, c in signals.most_common():
+        print(f"  {c:4d}  {sig}")
+    print()
 
 
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--url", default=DEFAULT_URL)
     p.add_argument("--secret", default=os.environ.get("ADMIN_API_SECRET", ""))
-    p.add_argument("--file", help="a saved JSON dump instead of a live fetch")
-    p.add_argument("--phone", default="", help="only this number")
-    p.add_argument("--since", default="", help="ISO date, e.g. 2026-08-22")
-    p.add_argument("--verbatim", action="store_true", help="print the message text")
+    p.add_argument("--file")
+    p.add_argument("--phone", default="")
+    p.add_argument("--since", default="")
+    p.add_argument("--summary-only", action="store_true")
+    p.add_argument("--width", type=int, default=76)
     a = p.parse_args()
 
     if a.file:
@@ -211,7 +317,7 @@ def main() -> int:
             json.dump(convs, f, indent=2)
         print("Saved conversations-dump.json")
 
-    report(convs, a.phone, a.since, a.verbatim)
+    run(convs, a.phone, a.since, a.summary_only, a.width)
     return 0
 
 
