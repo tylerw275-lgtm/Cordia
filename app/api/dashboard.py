@@ -837,6 +837,7 @@ one thing without giving standing access, she asks Cord to let them know.</div>
 <div class="card">
 <h2>Run a test</h2>
 <div class="actions">
+<a href="/health/conversations">Read the conversations</a>
 <a href="/health/test-email">Send a test email</a>
 <a href="/health/test-flights">Search live flights</a>
 <a class="secondary" href="/health/config">Raw configuration</a>
@@ -846,3 +847,137 @@ one thing without giving standing access, she asks Cord to let them know.</div>
 
 </div></body></html>"""
     return HTMLResponse(html)
+
+
+@router.get("/conversations", include_in_schema=False)
+async def conversations_audit(request: Request, phone: str = "", since: str = "") -> HTMLResponse:
+    """Every exchange, and what she did next.
+
+    The same judgement as scripts/audit_conversations.py, on a page — because
+    the person who needs to read it does not have a terminal, and an audit
+    nobody can open is not an audit.
+    """
+    if not _authorized(request):
+        return HTMLResponse(_LOGIN_PAGE.format(style=_STYLE, error=""), status_code=401)
+
+    from sqlalchemy import select
+
+    from app.database import get_db_session
+    from app.models.conversation import Conversation, Message
+    from app.services import conversation_audit as audit
+
+    threads, err = [], None
+    try:
+        async with get_db_session() as db:
+            convs = (await db.execute(
+                select(Conversation).order_by(Conversation.updated_at.desc())
+            )).scalars().all()
+            for conv in convs:
+                if phone and "".join(c for c in phone if c.isdigit())[-10:] not in \
+                        "".join(c for c in (conv.phone_number or "") if c.isdigit()):
+                    continue
+                rows = (await db.execute(
+                    select(Message).where(Message.conversation_id == conv.id)
+                    .order_by(Message.created_at)
+                )).scalars().all()
+                msgs = [{"role": m.role, "content": m.content, "created": m.created_at}
+                        for m in rows
+                        if not since or (m.created_at and m.created_at.isoformat() >= since)]
+                if not msgs:
+                    continue
+                exchanges = audit.build_exchanges(msgs)
+                if exchanges:
+                    threads.append((conv, exchanges, audit.summarise(exchanges)))
+    except Exception as e:  # a reporting page must never be the thing that breaks
+        logger.error(f"Conversation audit failed: {e}")
+        err = str(e)
+
+    def _bubble(who: str, body: str, meta: str, tone: str) -> str:
+        return (f'<div class="ex-row {tone}"><div class="ex-who">{who}</div>'
+                f'<div class="ex-meta">{_escape(meta)}</div>'
+                f'<div class="ex-body">{_escape(body) or "<em>(nothing)</em>"}</div></div>')
+
+    body = ""
+    if err:
+        body += f'<div class="err">Could not read the conversations: {_escape(err)}</div>'
+    if not threads and not err:
+        body += '<div class="note">No conversations in this window.</div>'
+
+    for conv, exchanges, s in threads:
+        body += (f'<div class="card"><h2>{_escape(_format_phone(conv.phone_number))}</h2>'
+                 f'<div class="sub">{s["exchanges"]} exchanges</div>')
+
+        for i, ex in enumerate(exchanges, 1):
+            carried = ", ".join(ex["prof"]["carried"]) or "nothing specific"
+            open_tag = " · OPEN-ENDED" if ex["prof"]["open_ended"] else ""
+            sound = ex["verdict"] == "ok"
+            body += f'<div class="ex"><div class="ex-n">#{i} &middot; {_when(ex["at"])}</div>'
+            body += _bubble("HER", ex["her"],
+                            f'{ex["prof"]["words"]} words · carried: {carried}{open_tag}',
+                            "her")
+            body += _bubble("CORD", ex["cord"],
+                            f'[{ex["verdict"]}]'
+                            + (f' · {ex["took"]}' if ex["took"] else "")
+                            + (" · asked her something" if ex["cord_asked"] else ""),
+                            "cord" if sound else "cord bad")
+            body += (f'<div class="ex-sig">&rarr; {_escape(ex["signal"])}</div></div>')
+
+        p = s["pct"]
+        body += ('<div class="profile"><h3>How she uses it</h3><ul>'
+                 f'<li>Ask length: median <b>{s["median_words"]} words</b> '
+                 f'(shortest {s["shortest"]}, longest {s["longest"]})</li>'
+                 f'<li><b>{p["open_ended"]:.0%}</b> open-ended — no date, number, '
+                 'budget, place or people</li>'
+                 f'<li><b>{p["rephrase"]:.0%}</b> re-asked something already asked</li>'
+                 f'<li><b>{p["correcting"]:.0%}</b> corrected Cord — it solved the '
+                 'wrong problem</li>'
+                 f'<li><b>{p["pushing_back"]:.0%}</b> pushed back — nothing arrived, '
+                 'or not what she meant</li>')
+        if s["cord_never_asked"]:
+            body += '<li><b>Cord never asked her a question. That is the finding.</b></li>'
+        else:
+            body += (f'<li>Cord asked her something <b>{s["answered"] + s["ignored"]}&times;</b>'
+                     f' — she answered {s["answered"]}, skipped {s["ignored"]}</li>')
+        body += (f'<li>Topics took a median of <b>{s["median_topic_turns"]}</b> exchanges '
+                 f'(longest {s["longest_topic"]})</li></ul>')
+
+        body += '<h3>What came back</h3><ul>'
+        for verdict, c in s["replies"]:
+            body += f'<li>{c} &times; {_escape(verdict)}</li>'
+        body += '</ul>'
+        if s["unsound"]:
+            body += (f'<div class="note">{s["unsound"]} of {s["exchanges"]} replies were '
+                     'not sound. A rephrase after a cut-off reply is Cord\'s doing; after '
+                     'a sound one it is a miss. Fixes shipped at: '
+                     + "; ".join(f"{t} {l}" for t, l in audit.FIXES) + '</div>')
+        body += '<h3>What she did next</h3><ul>'
+        for kind, c in s["signals"]:
+            body += f'<li>{c} &times; {_escape(kind)}</li>'
+        body += '</ul></div></div>'
+
+    return HTMLResponse(f"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Conversations &middot; Cord</title>{_STYLE}
+<style>
+.ex{{border-left:3px solid #e5e7eb;padding:2px 0 2px 14px;margin:18px 0}}
+.ex-n{{font-size:.78rem;color:#9ca3af;margin-bottom:6px}}
+.ex-row{{margin:8px 0}}
+.ex-who{{font-size:.7rem;letter-spacing:.08em;color:#6b7280;font-weight:700}}
+.ex-meta{{font-size:.75rem;color:#9ca3af;margin-bottom:3px}}
+.ex-body{{white-space:pre-wrap;padding:8px 11px;border-radius:8px;font-size:.9rem;
+  background:#f3f4f6}}
+.her .ex-body{{background:#eef2ff}}
+.cord .ex-body{{background:#f0fdf4}}
+.cord.bad .ex-body{{background:#fef2f2}}
+.ex-sig{{font-size:.82rem;color:#4b5563;margin-top:7px;font-style:italic}}
+.profile{{margin-top:26px;padding-top:14px;border-top:1px solid #e5e7eb}}
+.profile h3{{font-size:.85rem;text-transform:uppercase;letter-spacing:.06em;
+  color:#6b7280;margin:16px 0 6px}}
+.profile ul{{margin:0;padding-left:18px;font-size:.9rem;line-height:1.7}}
+</style></head><body><div class="wrap">
+<h1 style="font-size:1.25rem;margin:0 0 4px">Conversations</h1>
+<div class="sub" style="margin-bottom:20px">
+  What was asked, what came back, and what she did next &middot;
+  <a href="/health/dashboard">back to dashboard</a></div>
+{body}
+</div></body></html>""")

@@ -41,141 +41,13 @@ from datetime import datetime
 
 DEFAULT_URL = "https://cordia.aigenpartners.com"
 
-FIXES = [
-    ("2026-08-22T09:41", "Opus 5 live"),
-    ("2026-08-22T10:34", "parsed_output 400 fixed"),
-    ("2026-08-24T09:35", "reply truncation fixed"),
-    ("2026-08-24T09:52", "answer-then-ask live"),
-]
-
-FALLBACK = "I'm on it - give me a moment and ask me again if you don't hear back."
-FAILED = "Something went wrong on my end"
-PROMISE = re.compile(r"\b(sending|send it|get it to you|in your inbox|shortly|"
-                     r"in a (?:minute|moment|sec)|almost done|let me finish|right now)\b", re.I)
-
-HAS_DATE = re.compile(
-    r"\b(\d{1,2}/\d{1,2}|\d{4}-\d{2}-\d{2}"
-    r"|(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|jun(?:e)?|jul(?:y)?"
-    r"|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
-    r"|monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|tomorrow|tonight"
-    r"|this (?:week|weekend|month)|next (?:week|weekend|month))\b", re.I)
-HAS_NUMBER = re.compile(r"\b\d+\b")
-HAS_MONEY = re.compile(r"[$£€]\s?\d|budget|per night|per person|under \d")
-HAS_PROPER = re.compile(r"(?<!^)(?<![.!?]\s)\b[A-Z][a-z]{2,}\b")
-HAS_PEOPLE = re.compile(r"\b(me and|my |our |for \d+ (?:people|of us)|kids|family|everyone|"
-                        r"tom|karie|cordia)\b", re.I)
-
-# What she does when an answer misses.
-CORRECTION = re.compile(r"\b(no,|not what|i meant|actually|instead|rather|i said|"
-                        r"that'?s not|wrong)\b", re.I)
-# The trailing \b cannot match after "?", so those alternatives sit outside it.
-PUSHBACK = re.compile(r"\b(didn'?t get|never (?:got|came)|still (?:waiting|nothing)|"
-                      r"any(?:thing)? else|nothing|you there|anyone there)\b"
-                      r"|hello\s*\?|^\s*\?+\s*$|\?\?", re.I)
-STOPWORDS = set("a an the and or but of for to in on at is are was were be been with my "
-                "our me i you it this that some any can could would please need want "
-                "get got give find make do does help about from by as we us".split())
-
-
-def _txt(content: str) -> str:
-    if not content.lstrip().startswith("["):
-        return content
-    try:
-        blocks = json.loads(content)
-    except json.JSONDecodeError:
-        return content
-    if not isinstance(blocks, list):
-        return content
-    return " ".join(b.get("text", "") for b in blocks
-                    if isinstance(b, dict) and b.get("type") == "text").strip()
-
-
-def _keywords(text: str) -> set[str]:
-    return {w for w in re.findall(r"[a-z]{3,}", text.lower()) if w not in STOPWORDS}
-
-
-def _overlap(a: str, b: str) -> float:
-    ka, kb = _keywords(a), _keywords(b)
-    return len(ka & kb) / len(ka | kb) if (ka or kb) else 0.0
-
-
-def _when(stamp: str) -> datetime | None:
-    try:
-        return datetime.fromisoformat(stamp.replace("Z", "+00:00"))
-    except (ValueError, AttributeError):
-        return None
-
-
-def _gap(a: str, b: str) -> str:
-    ta, tb = _when(a), _when(b)
-    if not ta or not tb:
-        return ""
-    secs = (tb - ta).total_seconds()
-    if secs < 90:
-        return f"{int(secs)}s later"
-    if secs < 5400:
-        return f"{int(secs // 60)}m later"
-    if secs < 172800:
-        return f"{secs / 3600:.1f}h later"
-    return f"{int(secs // 86400)}d later"
-
-
-def classify_reply(text: str) -> str:
-    t = text.strip()
-    if not t:
-        return "EMPTY"
-    if FALLBACK in t:
-        return "FALLBACK — model produced no text"
-    if FAILED in t:
-        return "DIED — error reply"
-    if t.endswith((":", "-", "—", ",", ";")) or (len(t) > 40 and t[-1].isalnum()):
-        return "CUT OFF mid-thought"
-    if PROMISE.search(t):
-        return "PROMISED a delivery"
-    return "ok"
-
-
-def profile_ask(text: str, prev_cord: str, prev_her: str) -> dict:
-    words = text.split()
-    carried = [name for name, rx in (("date", HAS_DATE), ("number", HAS_NUMBER),
-                                     ("budget", HAS_MONEY), ("place/name", HAS_PROPER),
-                                     ("who's coming", HAS_PEOPLE)) if rx.search(text)]
-    asked_of_her = prev_cord.strip().endswith("?")
-    return {
-        "words": len(words),
-        "carried": carried,
-        "open_ended": not carried,
-        "answered_cord": asked_of_her and len(words) > 3 and not PUSHBACK.search(text),
-        "ignored_cord": asked_of_her and (len(words) <= 3 or bool(PUSHBACK.search(text))),
-        "correcting": bool(CORRECTION.search(text)),
-        "pushing_back": bool(PUSHBACK.search(text)),
-        "rephrase": _overlap(prev_her, text) > 0.34 if prev_her else False,
-    }
-
-
-def _signal(nxt_prof: dict | None, gap: str) -> tuple[str, str]:
-    """(kind, line). The kind aggregates; the line is what you read."""
-    if nxt_prof is None:
-        return "topic ended here", "no further message — topic ended here"
-    if nxt_prof["pushing_back"]:
-        return ("pushed back — the answer did not land",
-                f"SHE PUSHED BACK {gap} — the answer did not land")
-    if nxt_prof["correcting"]:
-        return ("corrected it — Cord solved the wrong problem",
-                f"SHE CORRECTED IT {gap} — Cord solved the wrong problem")
-    if nxt_prof["rephrase"]:
-        return ("asked again — same ask, reworded",
-                f"SHE ASKED AGAIN {gap} — same ask, reworded")
-    if nxt_prof["ignored_cord"]:
-        return ("Cord asked, she did not answer",
-                f"CORD ASKED, SHE DID NOT ANSWER {gap}")
-    if nxt_prof["answered_cord"]:
-        return "answered Cord's question", f"she answered Cord's question {gap}"
-    quiet = (gap.endswith("d later")
-             or (gap.endswith("h later") and float(gap.split("h")[0]) >= 6))
-    if quiet:
-        return ("went quiet", f"SHE WENT QUIET — nothing more for {gap.replace(' later','')}")
-    return "moved on", f"she moved on {gap}"
+# One implementation of the judgement, shared with the dashboard page at
+# /health/conversations — two copies would drift and disagree about the same
+# conversation.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from app.services.conversation_audit import (  # noqa: E402
+    FIXES, build_exchanges, classify_reply, gap_text, summarise, text_of,
+)
 
 
 def _fetch(url: str, secret: str) -> list[dict]:
@@ -190,109 +62,66 @@ def _fetch(url: str, secret: str) -> list[dict]:
 
 
 def run(convs, phone, since, summary_only, width):
-    style, replies, signals = Counter(), Counter(), Counter()
-    ask_words, topic_turns, exchanges = [], [], 0
-
     for conv in convs:
-        if phone and phone[-10:] not in re.sub(r"\D", "", conv.get("phone") or ""):
+        digits = re.sub(r"\D", "", conv.get("phone") or "")
+        if phone and re.sub(r"\D", "", phone)[-10:] not in digits:
             continue
         msgs = [m for m in conv.get("messages", [])
                 if not since or (m.get("created") or "") >= since]
-        if not msgs:
+        exchanges = build_exchanges(msgs)
+        if not exchanges:
             continue
+        s = summarise(exchanges)
 
-        print(f"\n{'='*width}\n{conv.get('phone','?')}   {len(msgs)} messages\n{'='*width}")
+        print(f"\n{'='*width}\n{conv.get('phone','?')}   "
+              f"{s['exchanges']} exchanges\n{'='*width}")
 
-        # Pair each of her messages with the reply that followed it.
-        pairs, prev_cord, prev_her = [], "", ""
-        for i, m in enumerate(msgs):
-            if m["role"] != "user":
-                prev_cord = _txt(m.get("content", ""))
-                continue
-            text = _txt(m.get("content", ""))
-            reply, reply_at = "", ""
-            for nxt in msgs[i + 1:]:
-                if nxt["role"] == "assistant":
-                    reply, reply_at = _txt(nxt.get("content", "")), nxt.get("created", "")
-                    break
-                break
-            pairs.append({"at": m.get("created", ""), "her": text, "cord": reply,
-                          "cord_at": reply_at,
-                          "prof": profile_ask(text, prev_cord, prev_her)})
-            prev_her, prev_cord = text, reply
+        if not summary_only:
+            for i, ex in enumerate(exchanges, 1):
+                carried = ", ".join(ex["prof"]["carried"]) or "nothing specific"
+                open_tag = " · OPEN-ENDED" if ex["prof"]["open_ended"] else ""
+                print(f"\n{'─'*width}\n  #{i}   {str(ex['at'])[:16].replace('T',' ')}")
+                print(f"\n  HER  ({ex['prof']['words']} words · carried: {carried}{open_tag})")
+                for line in (ex["her"] or "(empty)").splitlines() or [""]:
+                    print(f"     {line}")
+                print(f"\n  CORD  [{ex['verdict']}]"
+                      f"{'  ·  ' + ex['took'] if ex['took'] else ''}"
+                      f"{'  · asked her something' if ex['cord_asked'] else ''}")
+                for line in (ex["cord"] or "(nothing came back)").splitlines() or [""]:
+                    print(f"     {line}")
+                print(f"\n  → {ex['signal']}")
 
-        run_len = 0
-        for n, p in enumerate(pairs):
-            prof = p["prof"]
-            nxt = pairs[n + 1]["prof"] if n + 1 < len(pairs) else None
-            gap = _gap(p["at"], pairs[n + 1]["at"]) if n + 1 < len(pairs) else ""
-            verdict = classify_reply(p["cord"]) if p["cord"] else "NO REPLY AT ALL"
-            kind, sig = _signal(nxt, gap)
+        p = s["pct"]
+        print(f"\n\n{'='*width}\nHOW SHE USES IT   ({s['exchanges']} exchanges)\n{'='*width}")
+        print(f"\n  ask length      median {s['median_words']} words, "
+              f"shortest {s['shortest']}, longest {s['longest']}")
+        print(f"  {p['open_ended']:6.1%}  open-ended — no date, number, budget, place or people")
+        print(f"  {p['rephrase']:6.1%}  re-asked something she had already asked")
+        print(f"  {p['correcting']:6.1%}  corrected Cord — it solved the wrong problem")
+        print(f"  {p['pushing_back']:6.1%}  pushed back — nothing arrived, or not what she meant")
+        if s["cord_never_asked"]:
+            print("\n  Cord never asked her a question. That is the finding.")
+        else:
+            print(f"\n  Cord asked her something {s['answered'] + s['ignored']}× — "
+                  f"she answered {s['answered']}, skipped {s['ignored']}")
+        print(f"  topics took a median of {s['median_topic_turns']} exchanges "
+              f"(longest {s['longest_topic']})")
 
-            exchanges += 1
-            ask_words.append(prof["words"])
-            replies[verdict] += 1
-            signals[kind] += 1
-            for tag in ("open_ended", "correcting", "pushing_back", "rephrase",
-                        "answered_cord", "ignored_cord"):
-                if prof[tag]:
-                    style[tag] += 1
-            run_len += 1
-            if nxt is None or not (nxt["rephrase"] or nxt["correcting"] or nxt["pushing_back"]):
-                topic_turns.append(run_len)
-                run_len = 0
+        print(f"\n{'─'*width}\n  WHAT CAME BACK")
+        for verdict, c in s["replies"]:
+            print(f"  {c:4d}  {c/(s['exchanges'] or 1):6.1%}  {verdict}")
+        if s["unsound"]:
+            print(f"\n  {s['unsound']} of {s['exchanges']} replies were not sound. "
+                  "Fixes shipped at:")
+            for stamp, label in FIXES:
+                print(f"     {stamp}  {label}")
+            print("  A rephrase after a cut-off reply is Cord's doing; "
+                  "after a sound one it is a miss.")
 
-            if summary_only:
-                continue
-
-            carried = ", ".join(prof["carried"]) or "nothing specific"
-            print(f"\n{'─'*width}\n  #{n+1}   {p['at'][:16].replace('T',' ')}")
-            print(f"\n  HER  ({prof['words']} words · carried: {carried}"
-                  f"{' · OPEN-ENDED' if prof['open_ended'] else ''})")
-            for line in (p["her"] or "(empty)").splitlines() or [""]:
-                print(f"     {line}")
-            took = _gap(p["at"], p["cord_at"]) if p["cord_at"] else ""
-            print(f"\n  CORD  [{verdict}]{'  ·  ' + took if took else ''}"
-                  f"{'  · asked her something' if p['cord'].strip().endswith('?') else ''}")
-            for line in (p["cord"] or "(nothing came back)").splitlines() or [""]:
-                print(f"     {line}")
-            print(f"\n  → {sig}")
-
-    # ---- style profile -----------------------------------------------------
-    n = exchanges or 1
-    print(f"\n\n{'='*width}\nHOW SHE USES IT   ({exchanges} exchanges)\n{'='*width}")
-    if ask_words:
-        srt = sorted(ask_words)
-        print(f"\n  ask length      median {srt[len(srt)//2]} words, "
-              f"shortest {srt[0]}, longest {srt[-1]}")
-    print(f"  {style['open_ended']/n:6.1%}  open-ended — no date, number, budget, place or people")
-    print(f"  {style['rephrase']/n:6.1%}  re-asked something she had already asked")
-    print(f"  {style['correcting']/n:6.1%}  corrected Cord — it solved the wrong problem")
-    print(f"  {style['pushing_back']/n:6.1%}  pushed back — nothing arrived, or not what she meant")
-    answered, ignored = style["answered_cord"], style["ignored_cord"]
-    if answered + ignored:
-        print(f"\n  Cord asked her something {answered+ignored}× — "
-              f"she answered {answered}, skipped {ignored}")
-    else:
-        print("\n  Cord never asked her a question. That is the finding.")
-    if topic_turns:
-        print(f"  topics took a median of {sorted(topic_turns)[len(topic_turns)//2]} "
-              f"exchanges (longest {max(topic_turns)})")
-
-    print(f"\n{'─'*width}\n  WHAT CAME BACK")
-    for verdict, c in replies.most_common():
-        print(f"  {c:4d}  {c/n:6.1%}  {verdict}")
-    bad = sum(c for v, c in replies.items() if v != "ok")
-    if bad:
-        print(f"\n  {bad} of {n} replies were not sound. Fixes shipped at:")
-        for stamp, label in FIXES:
-            print(f"     {stamp}  {label}")
-        print("  A rephrase after a cut-off reply is Cord's doing; after a sound one it is a miss.")
-
-    print(f"\n{'─'*width}\n  WHAT SHE DID NEXT")
-    for sig, c in signals.most_common():
-        print(f"  {c:4d}  {sig}")
-    print()
+        print(f"\n{'─'*width}\n  WHAT SHE DID NEXT")
+        for kind, c in s["signals"]:
+            print(f"  {c:4d}  {kind}")
+        print()
 
 
 def main() -> int:
