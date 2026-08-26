@@ -61,14 +61,15 @@ def _fetch(url: str, secret: str) -> list[dict]:
     return out
 
 
-def run(convs, phone, since, summary_only, width):
+def run(convs, phone, since, summary_only, width, who=""):
     for conv in convs:
         digits = re.sub(r"\D", "", conv.get("phone") or "")
         if phone and re.sub(r"\D", "", phone)[-10:] not in digits:
             continue
         msgs = [m for m in conv.get("messages", [])
                 if not since or (m.get("created") or "") >= since]
-        exchanges = build_exchanges(msgs)
+        # The API gives a number, not a name. --who labels the thread.
+        exchanges = build_exchanges(msgs, who or "They")
         if not exchanges:
             continue
         s = summarise(exchanges)
@@ -81,7 +82,7 @@ def run(convs, phone, since, summary_only, width):
                 carried = ", ".join(ex["prof"]["carried"]) or "nothing specific"
                 open_tag = " · OPEN-ENDED" if ex["prof"]["open_ended"] else ""
                 print(f"\n{'─'*width}\n  #{i}   {str(ex['at'])[:16].replace('T',' ')}")
-                print(f"\n  HER  ({ex['prof']['words']} words · carried: {carried}{open_tag})")
+                print(f"\n  {(who or 'THEY').upper()}  ({ex['prof']['words']} words · carried: {carried}{open_tag})")
                 for line in (ex["her"] or "(empty)").splitlines() or [""]:
                     print(f"     {line}")
                 rounds = (f"  ·  {ex['rounds']} tool round"
@@ -94,7 +95,8 @@ def run(convs, phone, since, summary_only, width):
                 print(f"\n  → {ex['signal']}")
 
         p = s["pct"]
-        print(f"\n\n{'='*width}\nHOW SHE USES IT   ({s['exchanges']} exchanges)\n{'='*width}")
+        print(f"\n\n{'='*width}\nHOW {(who or 'THEY').upper()} USES IT   "
+              f"({s['exchanges']} exchanges)\n{'='*width}")
         print(f"\n  ask length      median {s['median_words']} words, "
               f"shortest {s['shortest']}, longest {s['longest']}")
         print(f"  {p['open_ended']:6.1%}  open-ended — no date, number, budget, place or people")
@@ -102,10 +104,10 @@ def run(convs, phone, since, summary_only, width):
         print(f"  {p['correcting']:6.1%}  corrected Cord — it solved the wrong problem")
         print(f"  {p['pushing_back']:6.1%}  pushed back — nothing arrived, or not what she meant")
         if s["cord_never_asked"]:
-            print("\n  Cord never asked her a question. That is the finding.")
+            print("\n  Cord never asked a question. That is the finding.")
         else:
-            print(f"\n  Cord asked her something {s['answered'] + s['ignored']}× — "
-                  f"she answered {s['answered']}, skipped {s['ignored']}")
+            print(f"\n  Cord asked a question {s['answered'] + s['ignored']}× — "
+                  f"answered {s['answered']}, skipped {s['ignored']}")
         print(f"  topics took a median of {s['median_topic_turns']} exchanges "
               f"(longest {s['longest_topic']})")
 
@@ -120,7 +122,7 @@ def run(convs, phone, since, summary_only, width):
             print("  A rephrase after a cut-off reply is Cord's doing; "
                   "after a sound one it is a miss.")
 
-        print(f"\n{'─'*width}\n  WHAT SHE DID NEXT")
+        print(f"\n{'─'*width}\n  WHAT HAPPENED NEXT")
         for kind, c in s["signals"]:
             print(f"  {c:4d}  {kind}")
         print()
@@ -133,6 +135,7 @@ def main() -> int:
     p.add_argument("--file")
     p.add_argument("--phone", default="")
     p.add_argument("--since", default="")
+    p.add_argument("--who", default="", help="whose thread this is, e.g. Cordia")
     p.add_argument("--summary-only", action="store_true")
     p.add_argument("--width", type=int, default=76)
     a = p.parse_args()
@@ -148,7 +151,7 @@ def main() -> int:
             json.dump(convs, f, indent=2)
         print("Saved conversations-dump.json")
 
-    run(convs, a.phone, a.since, a.summary_only, a.width)
+    run(convs, a.phone, a.since, a.summary_only, a.width, a.who)
     return 0
 
 

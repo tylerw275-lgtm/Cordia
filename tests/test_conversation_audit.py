@@ -327,3 +327,77 @@ async def test_an_empty_database_renders_rather_than_erroring(db, signed_in):
 
     assert r.status_code == 200
     assert "Could not read the conversations" not in r.text
+
+
+# --- whose thread is it --------------------------------------------------------
+
+def test_the_signals_name_the_person_whose_thread_it_is():
+    """It said "she" for everyone, which read as nonsense on Tom's thread. The
+    audit covers everyone who texts Cord, not only the account holder."""
+    msgs = _msgs(("user", "Suggest something", 0),
+                 ("assistant", "A few good ones:", 1),
+                 ("user", "Anything else?", 2))
+
+    assert audit.build_exchanges(msgs, "Tom")[0]["signal"].startswith("Tom pushed back")
+    assert audit.build_exchanges(msgs, "Cordia")[0]["signal"].startswith("Cordia pushed back")
+
+
+def test_an_unknown_number_gets_they_rather_than_a_guess():
+    msgs = _msgs(("user", "Suggest something", 0),
+                 ("assistant", "A few good ones:", 1),
+                 ("user", "Anything else?", 2))
+
+    assert audit.build_exchanges(msgs)[0]["signal"].startswith("They pushed back")
+
+
+def test_no_signal_line_assumes_a_gender():
+    """Every branch of signal(), checked — not just the one the fixture hits."""
+    msgs = _msgs(("user", "Plan a trip", 0),
+                 ("assistant", "Here is a plan.", 1),
+                 ("user", "no, I meant Naples", 4),
+                 ("assistant", "Naples then.", 5),
+                 ("user", "ok thanks very much indeed", 9),
+                 ("assistant", "Anything else?", 10),
+                 ("user", "no", 12),
+                 ("assistant", "Right you are.", 13),
+                 ("user", "Something unrelated entirely", 4000))
+
+    for ex in audit.build_exchanges(msgs, "Tom"):
+        lowered = ex["signal"].lower()
+        assert " she " not in f" {lowered} "
+        assert " her " not in f" {lowered} "
+        assert not lowered.startswith(("she ", "her "))
+
+
+@pytest.mark.asyncio
+async def test_the_page_names_tom_on_toms_thread(db, signed_in):
+    """End to end: the number resolves to a principal, and his name is what
+    appears — as the bubble label, the heading, and in the signal line."""
+    from app.models.authorized_user import AuthorizedUser
+
+    db.add(AuthorizedUser(name="Tom Harrington", phone="+16157080001", is_owner=False))
+    conv = Conversation(phone_number="+16157080001")
+    db.add(conv)
+    await db.commit()
+    await db.refresh(conv)
+    t0 = datetime(2026, 8, 24, 12, 0, tzinfo=timezone.utc)
+    db.add_all([
+        Message(conversation_id=conv.id, role="user",
+                content="Suggest something to do", created_at=t0),
+        Message(conversation_id=conv.id, role="assistant",
+                content="A few good ones:", created_at=t0 + timedelta(seconds=20)),
+        Message(conversation_id=conv.id, role="user",
+                content="Anything else?", created_at=t0 + timedelta(minutes=2)),
+    ])
+    await db.commit()
+
+    r = await signed_in.get("/health/conversations")
+
+    assert r.status_code == 200
+    assert "Tom pushed back" in r.text
+    assert "How Tom uses it" in r.text
+    assert ">TOM<" in r.text
+    # Nothing on the page calls Tom "she" or "her".
+    for wrong in ("what she did next", "How she uses it", ">HER<",
+                  "she answered", "she did not answer", "She pushed back"):
+        assert wrong not in r.text

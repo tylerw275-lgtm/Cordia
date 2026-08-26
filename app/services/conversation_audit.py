@@ -136,31 +136,37 @@ def profile_ask(text: str, prev_cord: str, prev_her: str) -> dict:
     }
 
 
-def signal(nxt_prof: dict | None, gap: str) -> tuple[str, str]:
-    """(kind, line). The kind aggregates; the line is what you read."""
+def signal(nxt_prof: dict | None, gap: str, who: str = "They") -> tuple[str, str]:
+    """(kind, line). The kind aggregates; the line is what you read.
+
+    `who` is the person whose thread this is. It used to be a hardcoded "she",
+    which read as nonsense on Tom's conversation — the audit covers everyone who
+    texts Cord, not only the account holder. Names where we know them, they/them
+    where we do not.
+    """
     if nxt_prof is None:
         return "topic ended here", "no further message — topic ended here"
     if nxt_prof["pushing_back"]:
         return ("pushed back — the answer did not land",
-                f"She pushed back {gap} — the answer did not land")
+                f"{who} pushed back {gap} — the answer did not land")
     if nxt_prof["correcting"]:
         return ("corrected it — Cord solved the wrong problem",
-                f"She corrected it {gap} — Cord solved the wrong problem")
+                f"{who} corrected it {gap} — Cord solved the wrong problem")
     if nxt_prof["rephrase"]:
         return ("asked again — same ask, reworded",
-                f"She asked again {gap} — same ask, reworded")
+                f"{who} asked again {gap} — same ask, reworded")
     if nxt_prof["ignored_cord"]:
-        return "Cord asked, she did not answer", f"Cord asked, she did not answer {gap}"
+        return "Cord asked, no answer came back", f"Cord asked, {who} did not answer {gap}"
     if nxt_prof["answered_cord"]:
-        return "answered Cord's question", f"She answered Cord's question {gap}"
+        return "answered Cord's question", f"{who} answered Cord's question {gap}"
     quiet = (gap.endswith("d later")
              or (gap.endswith("h later") and float(gap.split("h")[0]) >= 6))
     if quiet:
-        return "went quiet", f"She went quiet — nothing more for {gap.replace(' later', '')}"
-    return "moved on", f"She moved on {gap}"
+        return "went quiet", f"{who} went quiet — nothing more for {gap.replace(' later', '')}"
+    return "moved on", f"{who} moved on {gap}"
 
 
-def build_exchanges(messages: list[dict]) -> list[dict]:
+def build_exchanges(messages: list[dict], who: str = "They") -> list[dict]:
     """Pair each message she sent with the reply it drew, in order.
 
     `messages` are dicts with role, content and created, oldest first.
@@ -203,7 +209,7 @@ def build_exchanges(messages: list[dict]) -> list[dict]:
     for n, p in enumerate(pairs):
         nxt = pairs[n + 1]["prof"] if n + 1 < len(pairs) else None
         gap = gap_text(p["at"], pairs[n + 1]["at"]) if n + 1 < len(pairs) else ""
-        p["signal_kind"], p["signal"] = signal(nxt, gap)
+        p["signal_kind"], p["signal"] = signal(nxt, gap, who)
     return pairs
 
 
