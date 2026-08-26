@@ -166,7 +166,16 @@ def signal(nxt_prof: dict | None, gap: str, who: str = "They") -> tuple[str, str
     return "moved on", f"{who} moved on {gap}"
 
 
-def build_exchanges(messages: list[dict], who: str = "They") -> list[dict]:
+# A reply arrives while she is still holding the phone. Anything much later is
+# a proactive send — the morning brief, a price alert — written into the same
+# conversation by record_assistant_message. Counting one as a reply reported
+# "[ok] · 23.8h later" on messages that in fact got no answer at all, which hid
+# the very thing worth seeing.
+_REPLY_WINDOW_S = 30 * 60
+
+
+def build_exchanges(messages: list[dict], who: str = "They",
+                    reply_window_s: int = _REPLY_WINDOW_S) -> list[dict]:
     """Pair each message she sent with the reply it drew, in order.
 
     `messages` are dicts with role, content and created, oldest first.
@@ -190,6 +199,9 @@ def build_exchanges(messages: list[dict], who: str = "They") -> list[dict]:
                 break
             if role != "assistant":
                 continue          # tool results are not something Cord said
+            ta, tb = _dt(m.get("created")), _dt(nxt.get("created"))
+            if ta and tb and (tb - ta).total_seconds() > reply_window_s:
+                break             # a proactive send, not an answer to this
             spoken = text_of(nxt.get("content", ""))
             if spoken:
                 reply, reply_at = spoken, nxt.get("created")
