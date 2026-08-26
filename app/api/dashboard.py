@@ -862,7 +862,7 @@ one thing without giving standing access, she asks Cord to let them know.</div>
 
 @router.get("/conversations", include_in_schema=False)
 async def conversations_audit(request: Request, phone: str = "", since: str = "") -> HTMLResponse:
-    """Every exchange, and what she did next.
+    """Every exchange, and what happened next.
 
     The same judgement as scripts/audit_conversations.py, on a page — because
     the person who needs to read it does not have a terminal, and an audit
@@ -881,6 +881,20 @@ async def conversations_audit(request: Request, phone: str = "", since: str = ""
     threads, err = [], None
     try:
         async with get_db_session() as db:
+            from app.models.family import FamilyMember
+            from app.services import principal_service
+            from app.utils.phone import normalize_phone
+
+            names_by_phone = {}
+            for m in (await db.execute(
+                select(FamilyMember).where(FamilyMember.phone.isnot(None))
+            )).scalars():
+                if (k := normalize_phone(m.phone)):
+                    names_by_phone[k] = m.name
+            for person in await principal_service.list_principals(db):
+                if (k := normalize_phone(person.phone or "")):
+                    names_by_phone[k] = person.name
+
             convs = (await db.execute(
                 select(Conversation).order_by(Conversation.updated_at.desc())
             )).scalars().all()
@@ -895,9 +909,15 @@ async def conversations_audit(request: Request, phone: str = "", since: str = ""
                 msgs = [{"role": m.role, "content": m.content, "created": m.created_at}
                         for m in rows
                         if not since or (m.created_at and m.created_at.isoformat() >= since)]
+                # Whose thread this is. The audit used to say "she" for everyone,
+                # which read as nonsense on Tom's. First name only — it appears
+                # in a sentence, not on a form.
+                who = (names_by_phone.get(normalize_phone(conv.phone_number or ""))
+                       or "They")
+                who = who.split()[0] if who != "They" else who
                 if not msgs:
                     continue
-                exchanges = audit.build_exchanges(msgs)
+                exchanges = audit.build_exchanges(msgs, who)
                 if not exchanges:
                     continue
                 # Only a real send writes an sms_out row, so the ledger is the
@@ -932,9 +952,9 @@ async def conversations_audit(request: Request, phone: str = "", since: str = ""
             open_tag = " · OPEN-ENDED" if ex["prof"]["open_ended"] else ""
             sound = ex["verdict"] == "ok"
             body += f'<div class="ex"><div class="ex-n">#{i} &middot; {_when(ex["at"])}</div>'
-            body += _bubble("HER", ex["her"],
+            body += _bubble(who.upper(), ex["her"],
                             f'{ex["prof"]["words"]} words · carried: {carried}{open_tag}',
-                            "her")
+                            "ask")
             body += _bubble("CORD", ex["cord"],
                             f'[{ex["verdict"]}]'
                             + (f' · {ex["took"]}' if ex["took"] else "")
@@ -946,7 +966,7 @@ async def conversations_audit(request: Request, phone: str = "", since: str = ""
             body += (f'<div class="ex-sig">&rarr; {_escape(ex["signal"])}</div></div>')
 
         p = s["pct"]
-        body += ('<div class="profile"><h3>How she uses it</h3><ul>'
+        body += (f'<div class="profile"><h3>How {_escape(who)} uses it</h3><ul>'
                  f'<li>Ask length: median <b>{s["median_words"]} words</b> '
                  f'(shortest {s["shortest"]}, longest {s["longest"]})</li>'
                  f'<li><b>{p["open_ended"]:.0%}</b> open-ended — no date, number, '
@@ -957,10 +977,11 @@ async def conversations_audit(request: Request, phone: str = "", since: str = ""
                  f'<li><b>{p["pushing_back"]:.0%}</b> pushed back — nothing arrived, '
                  'or not what she meant</li>')
         if s["cord_never_asked"]:
-            body += '<li><b>Cord never asked her a question. That is the finding.</b></li>'
+            body += ('<li><b>Cord never asked a question. '
+                         'That is the finding.</b></li>')
         else:
-            body += (f'<li>Cord asked her something <b>{s["answered"] + s["ignored"]}&times;</b>'
-                     f' — she answered {s["answered"]}, skipped {s["ignored"]}</li>')
+            body += (f'<li>Cord asked a question <b>{s["answered"] + s["ignored"]}&times;</b>'
+                     f' — answered {s["answered"]}, skipped {s["ignored"]}</li>')
         body += (f'<li>Topics took a median of <b>{s["median_topic_turns"]}</b> exchanges '
                  f'(longest {s["longest_topic"]})</li></ul>')
 
@@ -973,7 +994,7 @@ async def conversations_audit(request: Request, phone: str = "", since: str = ""
                      'not sound. A rephrase after a cut-off reply is Cord\'s doing; after '
                      'a sound one it is a miss. Fixes shipped at: '
                      + "; ".join(f"{t} {l}" for t, l in audit.FIXES) + '</div>')
-        body += '<h3>What she did next</h3><ul>'
+        body += f'<h3>What {_escape(who)} did next</h3><ul>'
         for kind, c in s["signals"]:
             body += f'<li>{c} &times; {_escape(kind)}</li>'
         body += '</ul></div></div>'
@@ -989,7 +1010,7 @@ async def conversations_audit(request: Request, phone: str = "", since: str = ""
 .ex-meta{{font-size:.75rem;color:#9ca3af;margin-bottom:3px}}
 .ex-body{{white-space:pre-wrap;padding:8px 11px;border-radius:8px;font-size:.9rem;
   background:#f3f4f6}}
-.her .ex-body{{background:#eef2ff}}
+.ask .ex-body{{background:#eef2ff}}
 .cord .ex-body{{background:#f0fdf4}}
 .cord.bad .ex-body{{background:#fef2f2}}
 .ex-sig{{font-size:.82rem;color:#4b5563;margin-top:7px;font-style:italic}}
@@ -1000,7 +1021,7 @@ async def conversations_audit(request: Request, phone: str = "", since: str = ""
 </style></head><body><div class="wrap">
 <h1 style="font-size:1.25rem;margin:0 0 4px">Conversations</h1>
 <div class="sub" style="margin-bottom:20px">
-  What was asked, what came back, and what she did next &middot;
+  What was asked, what came back, and what happened next &middot;
   <a href="/health/dashboard">back to dashboard</a></div>
 {body}
 </div></body></html>""")
