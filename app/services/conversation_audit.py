@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timedelta as _timedelta
 
 # Fixes that changed what a reply looks like. A complaint from before one of
 # these is evidence about the bug, not about the person typing.
@@ -244,10 +244,15 @@ def mark_delivery(exchanges: list[dict], sent_at: list, window_s: int = 900) -> 
     stamps = sorted(t for t in (_dt(x) for x in sent_at) if t)
     if not stamps:
         return
+    # The ledger cannot speak to what happened before it existed. Billing was
+    # added partway through this project, so every reply older than its first
+    # row has no send recorded — and reading that as "never delivered" branded
+    # 47 replies undelivered that had plainly arrived and been replied to.
+    ledger_starts = stamps[0] - _timedelta(seconds=window_s)
     import bisect
     for ex in exchanges:
         made = _dt(ex.get("cord_at"))
-        if not ex.get("cord") or not made:
+        if not ex.get("cord") or not made or made < ledger_starts:
             continue
         i = bisect.bisect_left(stamps, made)
         near = any((stamps[j] - made).total_seconds() <= window_s

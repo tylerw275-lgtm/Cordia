@@ -245,10 +245,12 @@ def _hi(t0):
 
 def test_a_reply_that_never_left_the_building_is_marked():
     """She texted "Hi" and got nothing, but the reply was composed and stored.
-    Only a real send writes an sms_out row, so its absence is the evidence."""
+    Only a real send writes an sms_out row, so its absence is the evidence —
+    but only where the ledger was live either side of it, which is what these
+    two bracketing sends establish."""
     t0 = datetime(2026, 8, 20, 19, 27, tzinfo=timezone.utc)
     ex = audit.build_exchanges(_hi(t0))
-    audit.mark_delivery(ex, [t0 + timedelta(days=3)])
+    audit.mark_delivery(ex, [t0 - timedelta(days=1), t0 + timedelta(days=3)])
 
     assert ex[0]["verdict"] == "NEVER SENT — written but not delivered"
 
@@ -442,3 +444,88 @@ def test_deep_research_still_has_room_to_finish():
     ], "Cordia")[0]
 
     assert ex["verdict"] == "ok"
+
+
+# --- one thread's name must not leak into another ----------------------------
+
+@pytest.mark.asyncio
+async def test_each_thread_is_labelled_with_its_own_person(db, signed_in):
+    """Every bubble on the page read AARON — his was the last conversation
+    processed, and `who` was computed in the loop that read the database and
+    then read again in the loop that renders. The signal lines were right
+    because they are baked in at build time; only the label was stale."""
+    from app.models.authorized_user import AuthorizedUser
+
+    db.add_all([
+        AuthorizedUser(name="Cordia Harrington", phone="+16153005400", is_owner=True),
+        AuthorizedUser(name="Tom Harrington", phone="+16157080001", is_owner=False),
+    ])
+    t0 = datetime(2026, 8, 24, 12, 0, tzinfo=timezone.utc)
+    for phone, said in (("+16153005400", "A gift for Amber?"),
+                        ("+16157080001", "Suggest something to do")):
+        conv = Conversation(phone_number=phone)
+        db.add(conv)
+        await db.commit()
+        await db.refresh(conv)
+        db.add_all([
+            Message(conversation_id=conv.id, role="user", content=said, created_at=t0),
+            Message(conversation_id=conv.id, role="assistant",
+                    content="Here you go.", created_at=t0 + timedelta(seconds=10)),
+        ])
+    await db.commit()
+
+    r = await signed_in.get("/health/conversations")
+
+    assert r.status_code == 200
+    assert ">CORDIA<" in r.text and ">TOM<" in r.text
+    assert "How Cordia uses it" in r.text and "How Tom uses it" in r.text
+    assert ">AARON<" not in r.text
+
+
+@pytest.mark.asyncio
+async def test_the_reply_line_does_not_gender_the_reader(db, signed_in):
+    conv = Conversation(phone_number="+16157080001")
+    db.add(conv)
+    await db.commit()
+    await db.refresh(conv)
+    t0 = datetime(2026, 8, 24, 12, 0, tzinfo=timezone.utc)
+    db.add_all([
+        Message(conversation_id=conv.id, role="user", content="hi", created_at=t0),
+        Message(conversation_id=conv.id, role="assistant",
+                content="What can I help with?", created_at=t0 + timedelta(seconds=3)),
+    ])
+    await db.commit()
+
+    r = await signed_in.get("/health/conversations")
+
+    assert "asked a question" in r.text
+    assert "asked her something" not in r.text
+
+
+# --- the ledger cannot speak to what came before it --------------------------
+
+def test_replies_older_than_the_ledger_are_not_accused():
+    """47 replies on one thread were branded undelivered. Billing was added
+    partway through the project, so nothing before its first row has a send
+    recorded — and those replies had plainly arrived and been answered."""
+    old = datetime(2026, 7, 28, 16, 29, tzinfo=timezone.utc)
+    ex = audit.build_exchanges([
+        {"role": "user", "content": "Hello Cordia", "created": old},
+        {"role": "assistant", "content": "Hello! I'm your assistant.",
+         "created": old + timedelta(seconds=6)},
+    ], "Tyler")
+    audit.mark_delivery(ex, [datetime(2026, 8, 21, 19, 35, tzinfo=timezone.utc)])
+
+    assert ex[0]["verdict"] == "ok"
+
+
+def test_a_reply_after_the_ledger_started_is_still_judged():
+    t0 = datetime(2026, 8, 22, 1, 44, tzinfo=timezone.utc)
+    ex = audit.build_exchanges([
+        {"role": "user", "content": "Find flights", "created": t0},
+        {"role": "assistant", "content": "Three options.",
+         "created": t0 + timedelta(seconds=30)},
+    ], "Tyler")
+    audit.mark_delivery(ex, [datetime(2026, 8, 21, 19, 35, tzinfo=timezone.utc)])
+
+    assert ex[0]["verdict"] == "NEVER SENT — written but not delivered"
