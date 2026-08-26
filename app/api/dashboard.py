@@ -489,6 +489,17 @@ async def dashboard(request: Request, added: str = "", edited: str = "") -> HTML
             )).scalars():
                 if (k := normalize_phone(c.phone)):
                     people.setdefault(k, c.name)
+            # Principals last so their name wins, and because they were missing
+            # entirely: this list was built from family members and contacts
+            # only, so Cordia's own number and Tom's showed as "unknown — needs
+            # access" while the principals card below listed them correctly.
+            # A principal needs no circle access; access.resolve returns owner
+            # for them and their replies come straight back.
+            from app.services import principal_service
+            for person in await principal_service.list_principals(db):
+                if (k := normalize_phone(person.phone or "")):
+                    people[k] = person.name
+                    circle_access[k] = True
     except Exception as e:
         db_error = str(e)
         logger.error(f"Dashboard could not read the database: {e}")
@@ -886,8 +897,16 @@ async def conversations_audit(request: Request, phone: str = "", since: str = ""
                 if not msgs:
                     continue
                 exchanges = audit.build_exchanges(msgs)
-                if exchanges:
-                    threads.append((conv, exchanges, audit.summarise(exchanges)))
+                if not exchanges:
+                    continue
+                # Only a real send writes an sms_out row, so the ledger is the
+                # honest record of what actually reached her.
+                sent = (await db.execute(sa_text(
+                    "SELECT occurred_at FROM usage_events "
+                    "WHERE event_type = 'sms_out' AND actor = :who"
+                ), {"who": conv.phone_number})).scalars().all()
+                audit.mark_delivery(exchanges, list(sent))
+                threads.append((conv, exchanges, audit.summarise(exchanges)))
     except Exception as e:  # a reporting page must never be the thing that breaks
         logger.error(f"Conversation audit failed: {e}")
         err = str(e)
@@ -918,6 +937,9 @@ async def conversations_audit(request: Request, phone: str = "", since: str = ""
             body += _bubble("CORD", ex["cord"],
                             f'[{ex["verdict"]}]'
                             + (f' · {ex["took"]}' if ex["took"] else "")
+                            + (f' · {ex["rounds"]} tool round'
+                               f'{"s" if ex["rounds"] != 1 else ""}'
+                               if ex.get("rounds") else "")
                             + (" · asked her something" if ex["cord_asked"] else ""),
                             "cord" if sound else "cord bad")
             body += (f'<div class="ex-sig">&rarr; {_escape(ex["signal"])}</div></div>')

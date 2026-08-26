@@ -84,8 +84,10 @@ def run(convs, phone, since, summary_only, width):
                 print(f"\n  HER  ({ex['prof']['words']} words · carried: {carried}{open_tag})")
                 for line in (ex["her"] or "(empty)").splitlines() or [""]:
                     print(f"     {line}")
+                rounds = (f"  ·  {ex['rounds']} tool round"
+                          f"{'s' if ex['rounds'] != 1 else ''}" if ex.get("rounds") else "")
                 print(f"\n  CORD  [{ex['verdict']}]"
-                      f"{'  ·  ' + ex['took'] if ex['took'] else ''}"
+                      f"{'  ·  ' + ex['took'] if ex['took'] else ''}{rounds}"
                       f"{'  · asked her something' if ex['cord_asked'] else ''}")
                 for line in (ex["cord"] or "(nothing came back)").splitlines() or [""]:
                     print(f"     {line}")
