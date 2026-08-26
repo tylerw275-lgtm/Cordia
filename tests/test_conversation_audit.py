@@ -9,7 +9,10 @@ the same conversation.
 from datetime import datetime, timedelta, timezone
 
 import pytest
+import pytest_asyncio
 
+from app.config import settings
+from app.models.conversation import Conversation, Message
 from app.services import conversation_audit as audit
 
 
@@ -266,3 +269,61 @@ def test_no_ledger_at_all_accuses_nobody():
     audit.mark_delivery(ex, [])
 
     assert ex[0]["verdict"] == "ok"
+
+
+# --- the page with a session, which is where the code actually runs ----------
+
+@pytest_asyncio.fixture
+async def signed_in(client, monkeypatch):
+    """A real session cookie. Without one the route returns at the gate and the
+    whole database path — where the bugs live — never executes."""
+    from app.api import dashboard
+
+    monkeypatch.setattr(settings, "dashboard_password", "letmein", raising=False)
+    client.cookies.set(dashboard._COOKIE, dashboard._issue_session())
+    return client
+
+
+@pytest.mark.asyncio
+async def test_the_page_renders_a_real_conversation(db, signed_in):
+    """It shipped raising NameError: sa_text was never imported in this route.
+
+    Every existing test hit the 401 path, which returns before any database
+    code runs, so the page was never actually executed by the suite.
+    """
+    conv = Conversation(phone_number="+16153005400")
+    db.add(conv)
+    await db.commit()
+    await db.refresh(conv)
+    t0 = datetime(2026, 8, 24, 13, 25, tzinfo=timezone.utc)
+    db.add_all([
+        Message(conversation_id=conv.id, role="user",
+                content="A gift for Amber?", created_at=t0),
+        Message(conversation_id=conv.id, role="assistant",
+                content='[{"type":"tool_use","id":"t1","name":"recall_memory","input":{}}]',
+                created_at=t0 + timedelta(seconds=5)),
+        Message(conversation_id=conv.id, role="tool",
+                content='[{"type":"tool_result","tool_use_id":"t1","content":"..."}]',
+                created_at=t0 + timedelta(seconds=6)),
+        Message(conversation_id=conv.id, role="assistant",
+                content='[{"type":"text","text":"Amber loves pottery - three ideas."}]',
+                created_at=t0 + timedelta(seconds=20)),
+    ])
+    await db.commit()
+
+    r = await signed_in.get("/health/conversations")
+
+    assert r.status_code == 200
+    assert "Could not read the conversations" not in r.text
+    assert "A gift for Amber?" in r.text
+    # The whole point of the last fix: the answer behind the tool round shows.
+    assert "Amber loves pottery" in r.text
+    assert "1 tool round" in r.text
+
+
+@pytest.mark.asyncio
+async def test_an_empty_database_renders_rather_than_erroring(db, signed_in):
+    r = await signed_in.get("/health/conversations")
+
+    assert r.status_code == 200
+    assert "Could not read the conversations" not in r.text

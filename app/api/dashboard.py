@@ -872,6 +872,7 @@ async def conversations_audit(request: Request, phone: str = "", since: str = ""
         return HTMLResponse(_LOGIN_PAGE.format(style=_STYLE, error=""), status_code=401)
 
     from sqlalchemy import select
+    from sqlalchemy import text as sa_text
 
     from app.database import get_db_session
     from app.models.conversation import Conversation, Message
