@@ -885,15 +885,17 @@ async def conversations_audit(request: Request, phone: str = "", since: str = ""
             from app.services import principal_service
             from app.utils.phone import normalize_phone
 
-            names_by_phone = {}
-            for m in (await db.execute(
-                select(FamilyMember).where(FamilyMember.phone.isnot(None))
-            )).scalars():
-                if (k := normalize_phone(m.phone)):
+            names_by_phone, names_by_email = {}, {}
+            for m in (await db.execute(select(FamilyMember))).scalars():
+                if (k := normalize_phone(m.phone or "")):
                     names_by_phone[k] = m.name
+                if m.email:
+                    names_by_email[m.email.strip().lower()] = m.name
             for person in await principal_service.list_principals(db):
                 if (k := normalize_phone(person.phone or "")):
                     names_by_phone[k] = person.name
+                if person.email:
+                    names_by_email[person.email.strip().lower()] = person.name
 
             convs = (await db.execute(
                 select(Conversation).order_by(Conversation.updated_at.desc())
@@ -912,7 +914,9 @@ async def conversations_audit(request: Request, phone: str = "", since: str = ""
                 # Whose thread this is. The audit used to say "she" for everyone,
                 # which read as nonsense on Tom's. First name only — it appears
                 # in a sentence, not on a form.
-                who = (names_by_phone.get(normalize_phone(conv.phone_number or ""))
+                key = conv.phone_number or ""
+                who = (names_by_phone.get(normalize_phone(key))
+                       or names_by_email.get(key.strip().lower())
                        or "They")
                 who = who.split()[0] if who != "They" else who
                 if not msgs:
@@ -927,7 +931,7 @@ async def conversations_audit(request: Request, phone: str = "", since: str = ""
                     "WHERE event_type = 'sms_out' AND actor = :who"
                 ), {"who": conv.phone_number})).scalars().all()
                 audit.mark_delivery(exchanges, list(sent))
-                threads.append((conv, exchanges, audit.summarise(exchanges)))
+                threads.append((conv, exchanges, audit.summarise(exchanges), who))
     except Exception as e:  # a reporting page must never be the thing that breaks
         logger.error(f"Conversation audit failed: {e}")
         err = str(e)
@@ -943,7 +947,7 @@ async def conversations_audit(request: Request, phone: str = "", since: str = ""
     if not threads and not err:
         body += '<div class="note">No conversations in this window.</div>'
 
-    for conv, exchanges, s in threads:
+    for conv, exchanges, s, who in threads:
         body += (f'<div class="card"><h2>{_escape(_format_phone(conv.phone_number))}</h2>'
                  f'<div class="sub">{s["exchanges"]} exchanges</div>')
 
@@ -961,7 +965,7 @@ async def conversations_audit(request: Request, phone: str = "", since: str = ""
                             + (f' · {ex["rounds"]} tool round'
                                f'{"s" if ex["rounds"] != 1 else ""}'
                                if ex.get("rounds") else "")
-                            + (" · asked her something" if ex["cord_asked"] else ""),
+                            + (" · asked a question" if ex["cord_asked"] else ""),
                             "cord" if sound else "cord bad")
             body += (f'<div class="ex-sig">&rarr; {_escape(ex["signal"])}</div></div>')
 

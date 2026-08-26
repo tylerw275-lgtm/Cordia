@@ -89,7 +89,7 @@ def run(convs, phone, since, summary_only, width, who=""):
                           f"{'s' if ex['rounds'] != 1 else ''}" if ex.get("rounds") else "")
                 print(f"\n  CORD  [{ex['verdict']}]"
                       f"{'  ·  ' + ex['took'] if ex['took'] else ''}{rounds}"
-                      f"{'  · asked her something' if ex['cord_asked'] else ''}")
+                      f"{'  · asked a question' if ex['cord_asked'] else ''}")
                 for line in (ex["cord"] or "(nothing came back)").splitlines() or [""]:
                     print(f"     {line}")
                 print(f"\n  → {ex['signal']}")
