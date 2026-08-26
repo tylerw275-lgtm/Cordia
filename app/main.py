@@ -1,3 +1,4 @@
+import datetime as _dt
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -19,6 +20,11 @@ structlog.configure(
 )
 
 logger = structlog.get_logger()
+
+# When this process started. "Is the latest version live?" was unanswerable
+# from outside: /health says the app is up, not which build is serving it, and
+# a merge that never deployed looks identical to one that did.
+_STARTED_AT = _dt.datetime.now(_dt.timezone.utc)
 
 
 async def _bootstrap_family_data() -> None:
@@ -364,7 +370,27 @@ async def health_config() -> dict:
         digits = "".join(c for c in (v or "") if c.isdigit())
         return f"...{digits[-4:]}" if len(digits) >= 4 else "(not set)"
 
+    from app.prompts.prompt_profiles import get_profile
+    profile = get_profile(settings.claude_model)
+    now = _dt.datetime.now(_dt.timezone.utc)
+
     return {
+        # Railway injects these at build time. Compare `commit` against the
+        # merge you are asking about — that is the answer, and nothing else on
+        # this page is.
+        "build": {
+            "commit": (os.environ.get("RAILWAY_GIT_COMMIT_SHA") or "")[:7] or "(unknown)",
+            "branch": os.environ.get("RAILWAY_GIT_BRANCH") or "(unknown)",
+            "started_at": _STARTED_AT.isoformat(timespec="seconds"),
+            "uptime_minutes": round((now - _STARTED_AT).total_seconds() / 60, 1),
+        },
+        "model": {
+            "name": settings.claude_model,
+            "normal_max_tokens": profile.max_tokens,
+            "deep_max_tokens": profile.deep_max_tokens,
+            "normal_extras": profile.normal_extras,
+            "deep_extras": profile.deep_extras,
+        },
         "sms_provider": settings.sms_provider,
         "signalhouse": {
             "api_key_set": bool(settings.signalhouse_api_key),
