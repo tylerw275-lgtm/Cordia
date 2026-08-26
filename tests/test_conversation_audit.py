@@ -618,3 +618,23 @@ async def test_the_filter_keeps_the_other_narrowing_you_had(db, three_threads, s
 
     assert "show=Cordia&amp;since=2026-08-01" in r.text or \
            "show=Cordia&since=2026-08-01" in r.text
+
+
+# --- the page is HTML, not a stylesheet --------------------------------------
+
+def _outside_style(html: str) -> str:
+    """Everything a reader actually sees, with the stylesheets removed."""
+    import re
+    return re.sub(r"<style>.*?</style>", "", html, flags=re.S)
+
+
+@pytest.mark.asyncio
+async def test_the_stylesheet_does_not_print_itself_onto_the_page(db, signed_in):
+    """_STYLE is raw CSS — the dashboard wraps it in <style>, this page did not,
+    so the whole stylesheet rendered as visible text above the report."""
+    r = await signed_in.get("/health/conversations")
+
+    visible = _outside_style(r.text)
+    assert "box-sizing:border-box" not in visible
+    assert "font-family" not in visible
+    assert r.text.count("<style>") == r.text.count("</style>") == 1

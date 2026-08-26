@@ -1036,8 +1036,9 @@ async def conversations_audit(request: Request, phone: str = "", since: str = ""
 
     return HTMLResponse(f"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Conversations &middot; Cord</title>{_STYLE}
+<title>Conversations &middot; Cord</title>
 <style>
+{_STYLE}
 .ex{{border-left:3px solid #e5e7eb;padding:2px 0 2px 14px;margin:18px 0}}
 .ex-n{{font-size:.78rem;color:#9ca3af;margin-bottom:6px}}
 .ex-row{{margin:8px 0}}
