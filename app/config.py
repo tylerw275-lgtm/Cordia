@@ -172,8 +172,19 @@ class Settings(BaseSettings):
     # Live web research via Anthropic's server-side search/fetch tools. Costs
     # ~$0.01 per search on top of tokens, so the per-turn ceilings are config.
     enable_web_research: bool = True
-    web_search_max_uses: int = 8
-    web_fetch_max_uses: int = 5
+    # Per turn, and deliberately split by how much work the turn is doing.
+    # A single pair of numbers meant "what's the weather" and "price four
+    # balloon vendors from their own sites" got the same eight searches and
+    # five page reads — and the second kept running out mid-job, on exactly the
+    # verify-from-source discipline she asked for.
+    #
+    # Only search is billed (a cent each); a fetch costs nothing beyond the
+    # tokens it returns, so the cap that was hurting most was free to lift.
+    # These are ceilings, not budgets: the model stops when the work is done.
+    web_search_max_uses: int = 5
+    web_fetch_max_uses: int = 8
+    web_search_max_uses_deep: int = 25
+    web_fetch_max_uses_deep: int = 40
 
     # How many tool rounds one turn may take. Each round is one API request, so
     # this is the ceiling on both the answer's depth and its cost.
