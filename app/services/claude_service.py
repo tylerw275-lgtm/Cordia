@@ -640,26 +640,36 @@ async def _known_about(db: AsyncSession, member) -> str:
 _WEB_RESEARCH_ROLES = ("owner",)
 
 
-def _web_tools(role: str, profile) -> list[dict]:
+def _web_tools(role: str, profile, deep: bool = False) -> list[dict]:
     """Anthropic's server-side research tools, versioned for this model family.
 
     These run on Anthropic's infrastructure — there is no handler to implement
     and no key to hold. Note we do NOT also declare code_execution: the current
     tool versions run it internally for result filtering, and a second execution
     environment confuses the model.
+
+    The budget follows the size of the job. Both limits used to be flat, so a
+    deep research turn got the same five page reads as a one-line question and
+    kept stopping mid-work — "I hit my research limit before reading their
+    prices" reached her three separate times, always on the part she cared
+    about most.
     """
     if not settings.enable_web_research or role not in _WEB_RESEARCH_ROLES:
         return []
+    searches = (settings.web_search_max_uses_deep if deep
+                else settings.web_search_max_uses)
+    fetches = (settings.web_fetch_max_uses_deep if deep
+               else settings.web_fetch_max_uses)
     tools = [{
         "type": profile.web_search_version,
         "name": "web_search",
-        "max_uses": settings.web_search_max_uses,
+        "max_uses": searches,
     }]
     if profile.web_fetch_version:
         tools.append({
             "type": profile.web_fetch_version,
             "name": "web_fetch",
-            "max_uses": settings.web_fetch_max_uses,
+            "max_uses": fetches,
         })
     return tools
 
@@ -884,7 +894,7 @@ async def chat(
     )
 
     messages = _cache_history(history) + [{"role": "user", "content": user_content}]
-    web_tools = _web_tools(sender_role, profile)
+    web_tools = _web_tools(sender_role, profile, deep)
     tools = list(get_tool_schemas(sender_role)) + web_tools
 
     # Tool rounds, not API requests. A pause_turn resume is one more request
