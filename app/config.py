@@ -10,11 +10,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://cordia:password@localhost:5432/cordia_db"
 
     anthropic_api_key: str = ""
-    # Opus 5: 1M context, 128K output. The assistant uses a small fraction of
-    # both — the point of the bigger model is headroom, not scale. A multi-family
-    # trip plan did not fit in the previous model's budget and truncated
-    # mid-tool-call, so the email was never sent and she was told to ask again.
-    claude_model: str = "claude-opus-5"
+    claude_model: str = "claude-sonnet-5"
 
     # Active SMS provider: "signalhouse" or "twilio". Everything above the
     # send/receive layer (consent, keywords, drafting) is provider-agnostic.
